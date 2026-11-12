@@ -152,10 +152,13 @@
   --toolbar-field-border-color-focus: var(--sam-primary);
   --toolbar-field-text-color: var(--sam-on-bg);
   --toolbar-field-text-color-focus: var(--sam-on-bg);
-  --urlbar-border-radius: 999px;
   --urlbar-box-background-color: transparent;
   --urlbar-box-background-color-hover: var(--sam-hover);
   --urlbar-box-background-color-focus: transparent;
+  --urlbarview-background-color-selected: var(--sam-primary-container);
+  --urlbarview-text-color-selected: var(--sam-on-primary-container);
+  --urlbarview-text-color-action: var(--sam-primary);
+  --urlbarview-background-color-hover: var(--sam-hover);
 
   /* Tabs */
   --tab-border-radius: var(--sam-radius-sm);

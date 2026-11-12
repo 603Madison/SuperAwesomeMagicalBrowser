@@ -13,4 +13,6 @@ mkdir -p "$data/profile"
 
 # Make Wayland and X11 report our app ID, which is also the .desktop file's name.
 export MOZ_APP_REMOTINGNAME="$APP_ID"
+# What Settings › Make default registers as the browser: this launcher, not Firefox on its own.
+export MOZ_APP_LAUNCHER="$(readlink -f "$0")"
 exec "$APPDIR/firefox" --name "$APP_ID" --class "$APP_ID" --profile "$data/profile" "$@"

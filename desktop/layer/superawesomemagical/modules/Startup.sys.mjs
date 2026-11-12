@@ -21,6 +21,7 @@ const THEME_CSS = ROOT + "styles/theme.css";
 const BROWSER_CSS = ROOT + "styles/browser.css";
 const BROWSER_WINDOW = "chrome://browser/content/browser.xhtml";
 const START_PREF = "superawesomemagical.startpage.enabled";
+const APP_NAME = "SuperAwesomeMagical Browser";
 
 // Firefox's own pages drawn with its design tokens, which therefore take our colours too.
 const THEMED_ABOUT_PAGES = [
@@ -129,9 +130,36 @@ export const Startup = {
       utils.loadSheetUsingURIString(THEME_CSS, utils.AUTHOR_SHEET);
       if (url === BROWSER_WINDOW) {
         utils.loadSheetUsingURIString(BROWSER_CSS, utils.AUTHOR_SHEET);
+        this.nameWindow(win);
       }
     } catch (e) {
       console.error("SuperAwesomeMagical: could not style", url, e);
+    }
+  },
+
+  // Window titles end in our name ("Page — SuperAwesomeMagical Browser") rather than Firefox's.
+  // Firefox fills these hidden strings from its localisation and reads them when it first sets a
+  // title, so they are renamed as soon as they are filled in (and again if the language changes).
+  // About Firefox still says what the browser is built on.
+  nameWindow(win) {
+    const rename = () => {
+      for (const id of ["mainWindowTitle", "privateWindowTitle"]) {
+        const el = win.document.getElementById(id);
+        const text = el?.textContent ?? "";
+        const named = text.replace(/(Mozilla )?Firefox/, APP_NAME);
+        if (named !== text) {
+          el.textContent = named;
+        }
+      }
+    };
+    const strings = win.document.getElementById("titlestrings");
+    if (strings) {
+      new win.MutationObserver(rename).observe(strings, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+      rename();
     }
   },
 

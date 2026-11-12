@@ -24,6 +24,20 @@
       "MoreFromMozilla": false,
       "SkipOnboarding": true,
       "Locked": false
+    },
+    "SearchEngines": {
+      "Add": [
+        {
+          "Name": "Ecosia",
+          "Description": "Ecosia: the search engine that plants trees",
+          "Alias": "@ecosia",
+          "Method": "GET",
+          "URLTemplate": "https://www.ecosia.org/search?q={searchTerms}",
+          "SuggestURLTemplate": "https://ac.ecosia.org/autocomplete?q={searchTerms}&type=list",
+          "IconURL": "https://www.ecosia.org/favicon.ico"
+        }
+      ],
+      "Default": "Ecosia"
     }
   }
 }

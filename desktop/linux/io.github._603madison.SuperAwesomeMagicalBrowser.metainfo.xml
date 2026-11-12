@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github._603madison.SuperAwesomeMagicalBrowser</id>
+  <name>SuperAwesomeMagical Browser</name>
+  <summary>Browse the web, with your tabs down the side</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only AND MPL-2.0 AND OFL-1.1</project_license>
+  <developer id="io.github._603madison">
+    <name>SuperAwesomeMagical</name>
+  </developer>
+  <description>
+    <p>
+      Mozilla Firefox, as Mozilla releases it, in the SuperAwesomeMagical family's look: Lexend
+      everywhere, the aurora's purple and green over cool slate, soft rounded cards and tabs down
+      the left side.
+    </p>
+    <p>
+      The start page has a big clock and your most visited sites over a photo of the northern
+      lights. Searches go to Ecosia. It keeps its own profile, apart from any other Firefox.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github._603madison.SuperAwesomeMagicalBrowser.desktop</launchable>
+  <url type="homepage">https://github.com/603Madison/SuperAwesomeMagicalBrowser</url>
+  <categories>
+    <category>Network</category>
+    <category>WebBrowser</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>superawesomemagicalbrowser</binary>
+  </provides>
+</component>

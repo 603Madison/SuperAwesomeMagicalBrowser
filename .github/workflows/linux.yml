@@ -1,0 +1,192 @@
+# SuperAwesomeMagical Browser for Linux: builds the tarball, the .deb and the .rpm, checks each
+# (desktop/check.py, on the tarball and on the packages installed in Ubuntu, Debian and Fedora),
+# and publishes them as a GitHub release.
+#
+# - Every push and pull request: build and check.
+# - Run workflow with "release" ticked: build, check and release the version in desktop/release.env.
+# - Every six hours: if Mozilla has released a newer Firefox, build, check and release it, and
+#   commit the new version to desktop/release.env. Firefox's security fixes come this way.
+name: Linux
+
+on:
+  push:
+    paths: ["desktop/**", "tools/**", "LICENSE", ".github/workflows/linux.yml"]
+  pull_request:
+    paths: ["desktop/**", "tools/**", "LICENSE", ".github/workflows/linux.yml"]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish a release of the version in desktop/release.env"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "23 */6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    outputs:
+      firefox: ${{ steps.v.outputs.firefox }}
+      release: ${{ steps.v.outputs.release }}
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
+      publish: ${{ steps.v.outputs.publish }}
+      bumped: ${{ steps.v.outputs.bumped }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          RELEASE_INPUT: ${{ inputs.release }}
+        run: |
+          source desktop/release.env
+          ff=$FIREFOX_VERSION rel=$RELEASE build=true publish=false bumped=false
+          if [ "$EVENT" = schedule ]; then
+            latest=$(curl -fsSL --retry 5 https://product-details.mozilla.org/1.0/firefox_versions.json | jq -r .LATEST_FIREFOX_VERSION)
+            newest=$(printf '%s\n%s\n' "$ff" "$latest" | sort -V | tail -1)
+            if [ "$latest" != "$ff" ] && [ "$newest" = "$latest" ]; then
+              echo "Firefox $latest is out (we have $ff)"
+              ff=$latest rel=1 publish=true bumped=true
+            else
+              echo "Still on the latest Firefox ($ff)"
+              build=false
+            fi
+          elif [ "$EVENT" = workflow_dispatch ] && [ "$RELEASE_INPUT" = true ]; then
+            publish=true
+          fi
+          if [ "$publish" = true ] && git ls-remote --exit-code --tags origin "refs/tags/v$ff-$rel" >/dev/null; then
+            echo "::error::v$ff-$rel is already released; raise RELEASE in desktop/release.env"
+            exit 1
+          fi
+          {
+            echo "firefox=$ff"; echo "release=$rel"; echo "version=$ff-$rel"
+            echo "build=$build"; echo "publish=$publish"; echo "bumped=$bumped"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  deb:
+    name: Tarball and .deb
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      SAM_FIREFOX_VERSION: ${{ needs.version.outputs.firefox }}
+      SAM_RELEASE: ${{ needs.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      - run: desktop/build.sh deb
+      - name: Check the browser
+        run: env -u DISPLAY python3 desktop/check.py --screenshots desktop/out/screenshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: |
+            desktop/out/*.deb
+            desktop/out/*.tar.xz
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: desktop/out/screenshots
+
+  rpm:
+    name: .rpm
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    container: registry.fedoraproject.org/fedora:latest
+    env:
+      SAM_FIREFOX_VERSION: ${{ needs.version.outputs.firefox }}
+      SAM_RELEASE: ${{ needs.version.outputs.release }}
+    steps:
+      - run: dnf install -y rpm-build gnupg2 curl xz tar findutils gawk git-core
+      - uses: actions/checkout@v4
+      - run: desktop/build.sh rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: desktop/out/*.rpm
+          compression-level: 0
+
+  test-deb:
+    name: Installed on ${{ matrix.image }}
+    needs: deb
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:24.04", "debian:13"]
+    container:
+      image: ${{ matrix.image }}
+      options: --shm-size=2g
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: deb }
+      - name: Install the package (and what the check needs)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y ./superawesomemagicalbrowser_*.deb xvfb python3 fonts-dejavu-core
+      - run: python3 desktop/check.py /usr/bin/superawesomemagicalbrowser
+
+  test-rpm:
+    name: Installed on Fedora
+    needs: rpm
+    runs-on: ubuntu-24.04
+    container:
+      image: registry.fedoraproject.org/fedora:latest
+      options: --shm-size=2g
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: rpm }
+      - name: Install the package (and what the check needs)
+        run: dnf install -y ./superawesomemagicalbrowser-*.rpm xorg-x11-server-Xvfb python3 dejavu-sans-fonts
+      - run: python3 desktop/check.py /usr/bin/superawesomemagicalbrowser
+
+  release:
+    name: Release
+    needs: [version, deb, rpm, test-deb, test-rpm]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      FIREFOX: ${{ needs.version.outputs.firefox }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: deb, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: rpm, path: dist }
+      - name: Record the new Firefox in desktop/release.env
+        if: needs.version.outputs.bumped == 'true'
+        run: |
+          sed -i -e "s/^FIREFOX_VERSION=.*/FIREFOX_VERSION=$FIREFOX/" -e "s/^RELEASE=.*/RELEASE=1/" desktop/release.env
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Follow Firefox $FIREFOX"
+          git push
+      - name: Publish
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          notes=../release-notes/v$VERSION.md
+          if [ ! -f "$notes" ]; then
+            notes=$(mktemp)
+            printf 'SuperAwesomeMagical Browser on Firefox %s ([Firefox %s release notes](https://www.mozilla.org/firefox/%s/releasenotes/)).\n\nInstall the `.rpm` on Fedora-based systems or the `.deb` on Ubuntu- and Debian-based ones; see the README.\n' \
+              "$FIREFOX" "$FIREFOX" "$FIREFOX" > "$notes"
+          fi
+          gh release create "v$VERSION" --target "$(git rev-parse HEAD)" \
+            --title "SuperAwesomeMagical Browser $VERSION" --notes-file "$notes" *

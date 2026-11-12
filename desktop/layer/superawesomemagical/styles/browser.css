@@ -13,10 +13,11 @@
 :root:not([lwtheme]) {
   background-color: var(--sam-bg) !important;
   background-image:
-    radial-gradient(720px 300px at 8% -160px, color-mix(in srgb, var(--sam-glow-1) 30%, transparent), transparent 75%),
-    radial-gradient(640px 280px at 70% -170px, color-mix(in srgb, var(--sam-glow-2) 18%, transparent), transparent 75%) !important;
+    radial-gradient(760px 300px at 4% -90px, color-mix(in srgb, var(--sam-glow-1) 42%, transparent), transparent 72%),
+    radial-gradient(700px 280px at 72% -130px, color-mix(in srgb, var(--sam-glow-2) 24%, transparent), transparent 72%) !important;
   background-repeat: no-repeat !important;
 
+  body,
   #navigator-toolbox,
   #nav-bar,
   #TabsToolbar,
@@ -70,35 +71,6 @@
   #nav-bar {
     padding-block: 6px !important;
     box-shadow: none !important;
-  }
-
-  #urlbar-container {
-    --urlbar-container-height: 44px !important;
-  }
-
-  #urlbar {
-    --urlbar-height: 36px !important;
-  }
-
-  #urlbar-background {
-    box-shadow: none !important;
-  }
-
-  #urlbar[focused] > .urlbar-background,
-  #urlbar[open] > .urlbar-background {
-    outline: 2px solid var(--sam-primary) !important;
-    outline-offset: -2px;
-  }
-
-  /* The drop-down of suggestions under the address bar: a card of its own. */
-  #urlbar[open] > .urlbar-background {
-    border-radius: 22px !important;
-    box-shadow: var(--sam-shadow) !important;
-  }
-
-  .urlbarView-row[selected],
-  .urlbarView-row:hover {
-    border-radius: 12px;
   }
 
   /* ---- Tabs down the left ---- */

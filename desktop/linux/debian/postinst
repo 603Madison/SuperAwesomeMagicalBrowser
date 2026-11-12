@@ -1,0 +1,8 @@
+#!/bin/sh
+# Offer SuperAwesomeMagical Browser as a system web browser (x-www-browser), as Firefox's
+# package does. The desktop's own default browser setting is separate (see the README).
+set -e
+if [ "$1" = "configure" ]; then
+  update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/bin/superawesomemagicalbrowser 40
+  update-alternatives --install /usr/bin/gnome-www-browser gnome-www-browser /usr/bin/superawesomemagicalbrowser 40
+fi

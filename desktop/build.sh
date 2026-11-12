@@ -14,6 +14,9 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=release.env
 source "$here/release.env"
+# CI's "follow Firefox" run builds a new Firefox before release.env is updated.
+FIREFOX_VERSION=${SAM_FIREFOX_VERSION:-$FIREFOX_VERSION}
+RELEASE=${SAM_RELEASE:-$RELEASE}
 
 APP=superawesomemagicalbrowser
 APP_ID=io.github._603madison.SuperAwesomeMagicalBrowser
@@ -90,13 +93,14 @@ assemble() {
 }
 
 tarball() {
-  log "Packing $APP-$VERSION-linux-x86_64.tar.xz"
-  tar -C "$out" -cJf "$out/SuperAwesomeMagicalBrowser-$VERSION-linux-x86_64.tar.xz" "$APP"
+  log "Packing SuperAwesomeMagicalBrowser-$VERSION-linux-x86_64.tar.xz"
+  tar -C "$out" -I "xz -T0" -cf "$out/SuperAwesomeMagicalBrowser-$VERSION-linux-x86_64.tar.xz" "$APP"
 }
 
-# Lay out the system install (/usr) in $1: the browser in /usr/lib/superawesomemagicalbrowser.
+# Lay out the system install (/usr) in $1: the browser in /usr/lib/superawesomemagicalbrowser, and
+# the licences in $2 (Debian and Fedora keep them in different places).
 stage_system() {
-  local dest=$1
+  local dest=$1 licenses=$2
   rm -rf "$dest"
   mkdir -p "$dest/usr/lib" "$dest/usr/bin" "$dest/usr/share/applications" "$dest/usr/share/metainfo"
   cp -a "$root" "$dest/usr/lib/$APP"
@@ -108,19 +112,19 @@ stage_system() {
   install -m644 "$here/linux/$APP_ID.metainfo.xml" "$dest/usr/share/metainfo/"
   mkdir -p "$dest/usr/share/icons"
   cp -r "$here/linux/icons" "$dest/usr/share/icons/hicolor"
-  mkdir -p "$dest/usr/share/licenses/$APP"
-  cp "$root/licenses/"* "$dest/usr/share/licenses/$APP/"
+  mkdir -p "$dest$licenses"
+  cp "$root/licenses/"* "$dest$licenses/"
 }
 
 deb() {
   log "Building ${APP}_${VERSION}_amd64.deb"
   local stage="$out/deb"
-  stage_system "$stage"
+  stage_system "$stage" "/usr/share/doc/$APP"
   mkdir -p "$stage/DEBIAN"
   local size
   size=$(du -sk --exclude=DEBIAN "$stage" | cut -f1)
   sed -e "s/@VERSION@/$VERSION/" -e "s/@SIZE@/$size/" "$here/linux/debian/control" >"$stage/DEBIAN/control"
-  install -m755 "$here/linux/debian/postinst" "$here/linux/debian/postrm" "$stage/DEBIAN/"
+  install -m755 "$here/linux/debian/postinst" "$here/linux/debian/prerm" "$stage/DEBIAN/"
   dpkg-deb --root-owner-group -Zxz --build "$stage" "$out/${APP}_${VERSION}_amd64.deb"
   rm -rf "$stage"
 }
@@ -128,7 +132,7 @@ deb() {
 rpm() {
   log "Building $APP-$VERSION.x86_64.rpm"
   local stage="$out/rpm" top="$out/rpmbuild"
-  stage_system "$stage"
+  stage_system "$stage" "/usr/share/licenses/$APP"
   rm -rf "$top"
   mkdir -p "$top"/{BUILD,RPMS,SPECS,SRPMS,SOURCES}
   rpmbuild -bb "$here/linux/$APP.spec" \
