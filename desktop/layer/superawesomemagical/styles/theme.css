@@ -1,0 +1,201 @@
+/* SuperAwesomeMagical Browser: the colours and type of every Firefox window and dialog.
+ *
+ * Firefox draws its interface from design tokens (custom properties declared inside CSS layers on
+ * :root). This sheet is added to each window as an author sheet (modules/Startup.sys.mjs), and
+ * unlayered declarations beat layered ones, so setting the tokens here re-colours everything that
+ * uses them without copying Firefox's own rules. Window layout is in browser.css.
+ *
+ * The colours are the SuperAwesomeMagical ones (SuperAwesomeMagicalLinux's tools/schemes.py): the
+ * aurora's purple (primary) and green (secondary) over the cool slate neutrals every app shares.
+ * Light or dark follows the system, as Firefox's default theme does. Picking another theme in
+ * Add-ons and themes turns all of this off ([lwtheme]), so that theme shows as its author meant.
+ */
+
+/* ---- The palette ---- */
+
+:root {
+  color-scheme: dark;
+  --sam-bg: #0b1220;
+  --sam-on-bg: #e5e9f0;
+  --sam-surface-variant: #1e293b;
+  --sam-on-surface-variant: #a9b4c6;
+  --sam-container-lowest: #070c16;
+  --sam-container-low: #0f1828;
+  --sam-container: #131d30;
+  --sam-container-high: #1a2539;
+  --sam-container-highest: #223047;
+  --sam-outline: #3b4a63;
+  --sam-outline-variant: #263349;
+  --sam-primary: #cfbdff;
+  --sam-on-primary: #341a86;
+  --sam-primary-container: #4b33a8;
+  --sam-on-primary-container: #e9ddff;
+  --sam-secondary: #6ef2b0;
+  --sam-on-secondary: #003822;
+  --sam-secondary-container: #005233;
+  --sam-on-secondary-container: #c0ffd8;
+  --sam-tertiary: #8db4ff;
+  --sam-error: #ff8a80;
+  --sam-glow-1: #5b3fd1;
+  --sam-glow-2: #12a37c;
+  --sam-shadow: 0 12px 40px rgb(0 0 0 / 0.45);
+  --sam-hover: color-mix(in srgb, var(--sam-on-bg) 9%, transparent);
+  --sam-pressed: color-mix(in srgb, var(--sam-on-bg) 15%, transparent);
+  --sam-radius: 16px;
+  --sam-radius-sm: 12px;
+  --sam-font: "Lexend", system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --sam-bg: #f5f7fb;
+    --sam-on-bg: #111827;
+    --sam-surface-variant: #e4e9f2;
+    --sam-on-surface-variant: #4b5565;
+    --sam-container-lowest: #ffffff;
+    --sam-container-low: #fbfcfe;
+    --sam-container: #ffffff;
+    --sam-container-high: #eef2f8;
+    --sam-container-highest: #e6ebf3;
+    --sam-outline: #b8c1cf;
+    --sam-outline-variant: #dde3ec;
+    --sam-primary: #5b3fd1;
+    --sam-on-primary: #ffffff;
+    --sam-primary-container: #e9ddff;
+    --sam-on-primary-container: #1d0060;
+    --sam-secondary: #0b7a4f;
+    --sam-on-secondary: #ffffff;
+    --sam-secondary-container: #ddece3;
+    --sam-on-secondary-container: #002112;
+    --sam-tertiary: #2563eb;
+    --sam-error: #c62828;
+    --sam-glow-1: #b9a6ff;
+    --sam-glow-2: #8fe6c8;
+    --sam-shadow: 0 12px 40px rgb(17 24 39 / 0.14);
+    --sam-hover: color-mix(in srgb, var(--sam-on-bg) 6%, transparent);
+    --sam-pressed: color-mix(in srgb, var(--sam-on-bg) 11%, transparent);
+  }
+}
+
+/* ---- Firefox's tokens, in those colours ---- */
+
+:root:not([lwtheme]) {
+  /* Accent */
+  --color-accent-primary: var(--sam-primary);
+  --color-accent-primary-hover: color-mix(in srgb, var(--sam-primary) 88%, var(--sam-on-bg));
+  --color-accent-primary-active: color-mix(in srgb, var(--sam-primary) 76%, var(--sam-on-bg));
+  --color-accent-primary-selected: var(--sam-primary);
+  --color-accent-attention: var(--sam-secondary);
+  --focus-outline-color: var(--sam-primary);
+  --link-color: var(--sam-primary);
+  --link-color-hover: var(--color-accent-primary-hover);
+  --link-color-active: var(--color-accent-primary-active);
+  --text-color-accent-primary-selected: var(--sam-on-primary);
+
+  /* Surfaces and text */
+  --background-color-canvas: var(--sam-bg);
+  --background-color-box: var(--sam-container);
+  --background-color-box-info: var(--sam-container-high);
+  --background-color-list-item-hover: var(--sam-hover);
+  --text-color: var(--sam-on-bg);
+  --text-color-deemphasized: var(--sam-on-surface-variant);
+  --text-color-error: var(--sam-error);
+  --border-color: var(--sam-outline);
+  --border-color-interactive: var(--sam-outline);
+  --border-color-deemphasized: var(--sam-outline-variant);
+  --card-border-color: var(--sam-outline-variant);
+  --card-box-shadow: none;
+
+  /* Buttons */
+  --button-background-color: var(--sam-container-high);
+  --button-background-color-hover: var(--sam-container-highest);
+  --button-background-color-active: color-mix(in srgb, var(--sam-container-highest) 80%, var(--sam-on-bg));
+  --button-background-color-primary: var(--sam-primary);
+  --button-background-color-primary-hover: var(--color-accent-primary-hover);
+  --button-background-color-primary-active: var(--color-accent-primary-active);
+  --button-text-color: var(--sam-on-bg);
+  --button-text-color-primary: var(--sam-on-primary);
+  --button-border-color: transparent;
+  --button-border-radius: var(--sam-radius-sm);
+  --border-radius-medium: 10px;
+  --border-radius-large: var(--sam-radius);
+  --input-background-color: var(--sam-container-high);
+  --input-text-color: var(--sam-on-bg);
+
+  /* The window: one slate surface with the page as a card on it (browser.css). */
+  --toolbox-background-color: var(--sam-bg);
+  --toolbox-background-color-inactive: var(--sam-bg);
+  --toolbox-text-color: var(--sam-on-bg);
+  --toolbox-text-color-inactive: var(--sam-on-bg);
+  --toolbar-background-color: var(--sam-bg);
+  --toolbar-text-color: var(--sam-on-bg);
+  --toolbar-color-scheme: inherit;
+  --chrome-content-separator-color: var(--sam-outline-variant);
+  --tabs-navbar-separator-style: none;
+  --sidebar-background-color: var(--sam-bg);
+  --sidebar-text-color: var(--sam-on-bg);
+  --sidebar-border-color: var(--sam-outline-variant);
+
+  /* Toolbar buttons: round, like the apps' icon buttons. */
+  --toolbarbutton-border-radius: 999px;
+  --toolbarbutton-icon-fill: var(--sam-on-surface-variant);
+  --toolbarbutton-icon-fill-attention: var(--sam-primary);
+  --toolbarbutton-icon-fill-attention-text: var(--sam-on-primary);
+  --toolbarbutton-background-color-hover: var(--sam-hover);
+  --toolbarbutton-background-color-active: var(--sam-pressed);
+
+  /* The address bar: a pill. */
+  --toolbar-field-background-color: var(--sam-container-high);
+  --toolbar-field-background-color-focus: var(--sam-container);
+  --toolbar-field-border-color: transparent;
+  --toolbar-field-border-color-focus: var(--sam-primary);
+  --toolbar-field-text-color: var(--sam-on-bg);
+  --toolbar-field-text-color-focus: var(--sam-on-bg);
+  --urlbar-border-radius: 999px;
+  --urlbar-box-background-color: transparent;
+  --urlbar-box-background-color-hover: var(--sam-hover);
+  --urlbar-box-background-color-focus: transparent;
+
+  /* Tabs */
+  --tab-border-radius: var(--sam-radius-sm);
+  --tab-background-color-hover: var(--sam-hover);
+  --tab-background-color-selected: var(--sam-primary-container);
+  --tab-text-color-selected: var(--sam-on-primary-container);
+  --tab-box-shadow-selected: none;
+  --tab-border-color-selected: transparent;
+
+  /* Menus and panels */
+  --panel-background-color: var(--sam-container);
+  --panel-text-color: var(--sam-on-bg);
+  --panel-border-color: var(--sam-outline-variant);
+  --panel-border-radius: var(--sam-radius);
+  --popup-border-color: var(--sam-outline-variant);
+  --popup-border-radius: var(--sam-radius);
+  --panel-separator-color: var(--sam-outline-variant);
+  --panel-menuitem-border-radius: 10px;
+  --panel-footer-background-color: var(--sam-container-high);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([lwtheme]) {
+    /* On light slate the fields are white cards with a hairline, as in the apps. */
+    --toolbar-field-background-color: var(--sam-container);
+    --toolbar-field-border-color: var(--sam-outline-variant);
+    --button-background-color: var(--sam-container);
+  }
+}
+
+/* ---- Lexend ---- */
+/* Bundled in Firefox's fonts folder (fonts/Lexend[wght].ttf), so it is there even where the
+ * system doesn't have it. Developer tools keep their own fonts (Startup.sys.mjs skips them). */
+
+:root,
+:root * {
+  font-family: var(--sam-font) !important;
+}
+
+:root:not([lwtheme]) ::selection {
+  background-color: color-mix(in srgb, var(--sam-primary) 35%, transparent);
+  color: inherit;
+}

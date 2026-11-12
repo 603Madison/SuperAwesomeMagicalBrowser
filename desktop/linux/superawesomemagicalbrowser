@@ -1,0 +1,16 @@
+#!/bin/sh
+# Starts SuperAwesomeMagical Browser: Firefox from this folder, with its own profile (so it never
+# mixes with a separately installed Firefox) and its own window identity (so the desktop shows our
+# name and icon). Arguments are Firefox's: URLs to open, --private-window, --new-window and so on.
+#
+# The packages install this as /usr/bin/superawesomemagicalbrowser with APPDIR set to
+# /usr/lib/superawesomemagicalbrowser; in the tarball it sits beside Firefox.
+APPDIR=$(dirname "$(readlink -f "$0")")
+APP_ID=io.github._603madison.SuperAwesomeMagicalBrowser
+
+data="${XDG_DATA_HOME:-$HOME/.local/share}/superawesomemagicalbrowser"
+mkdir -p "$data/profile"
+
+# Make Wayland and X11 report our app ID, which is also the .desktop file's name.
+export MOZ_APP_REMOTINGNAME="$APP_ID"
+exec "$APPDIR/firefox" --name "$APP_ID" --class "$APP_ID" --profile "$data/profile" "$@"

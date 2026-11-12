@@ -1,0 +1,147 @@
+/* SuperAwesomeMagical Browser: the browser window's layout. Colours are in theme.css.
+ *
+ * The window is one slate surface (toolbar and the tab sidebar alike) with a faint glow of the
+ * aurora at the top, as in the apps, and the web page sits on it as a rounded card. Tabs run down
+ * the left side (Firefox's own vertical tabs, turned on in defaults/pref).
+ *
+ * Only for Firefox's default theme: another theme from Add-ons and themes ([lwtheme]) gets
+ * Firefox's own layout back.
+ */
+
+/* ---- One surface, with the aurora's glow ---- */
+
+:root:not([lwtheme]) {
+  background-color: var(--sam-bg) !important;
+  background-image:
+    radial-gradient(720px 300px at 8% -160px, color-mix(in srgb, var(--sam-glow-1) 30%, transparent), transparent 75%),
+    radial-gradient(640px 280px at 70% -170px, color-mix(in srgb, var(--sam-glow-2) 18%, transparent), transparent 75%) !important;
+  background-repeat: no-repeat !important;
+
+  #navigator-toolbox,
+  #nav-bar,
+  #TabsToolbar,
+  #PersonalToolbar,
+  #browser,
+  #sidebar-container,
+  #sidebar-main,
+  sidebar-main,
+  #vertical-tabs,
+  #tabbrowser-tabbox,
+  #tabbrowser-tabpanels {
+    background: transparent !important;
+    border-color: transparent !important;
+  }
+
+  #navigator-toolbox {
+    border-bottom: none !important;
+  }
+
+  /* ---- The page: a rounded card ---- */
+
+  #tabbrowser-tabbox {
+    margin: 0 8px 8px 0;
+    border-radius: var(--sam-radius);
+    outline: 1px solid var(--sam-outline-variant) !important;
+    outline-offset: -1px;
+    box-shadow: 0 2px 14px rgb(0 0 0 / 0.16) !important;
+    overflow: clip;
+    background-color: var(--sam-container-low) !important;
+  }
+
+  /* Nothing to draw a frame around when the page fills the screen. */
+  &[inDOMFullscreen] #tabbrowser-tabbox,
+  &[sizemode="fullscreen"] #tabbrowser-tabbox {
+    margin: 0;
+    border-radius: 0;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
+  /* Firefox's own separator between the toolbar/sidebar and the page. */
+  .browserStack,
+  .browserContainer {
+    outline: none !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* ---- Toolbar ---- */
+
+  #nav-bar {
+    padding-block: 6px !important;
+    box-shadow: none !important;
+  }
+
+  #urlbar-container {
+    --urlbar-container-height: 44px !important;
+  }
+
+  #urlbar {
+    --urlbar-height: 36px !important;
+  }
+
+  #urlbar-background {
+    box-shadow: none !important;
+  }
+
+  #urlbar[focused] > .urlbar-background,
+  #urlbar[open] > .urlbar-background {
+    outline: 2px solid var(--sam-primary) !important;
+    outline-offset: -2px;
+  }
+
+  /* The drop-down of suggestions under the address bar: a card of its own. */
+  #urlbar[open] > .urlbar-background {
+    border-radius: 22px !important;
+    box-shadow: var(--sam-shadow) !important;
+  }
+
+  .urlbarView-row[selected],
+  .urlbarView-row:hover {
+    border-radius: 12px;
+  }
+
+  /* ---- Tabs down the left ---- */
+
+  #tabbrowser-tabs[orient="vertical"] {
+    --tab-min-height: 38px;
+
+    .tabbrowser-tab {
+      padding-block: 1px !important;
+    }
+
+    .tab-label {
+      font-size: 13.5px;
+    }
+
+    .tabbrowser-tab[selected] .tab-label {
+      font-weight: 500;
+    }
+
+    .tabbrowser-tab[selected] .tab-close-button {
+      color: var(--sam-on-primary-container);
+    }
+  }
+
+  #tabs-newtab-button {
+    border-radius: var(--sam-radius-sm) !important;
+    color: var(--sam-on-surface-variant) !important;
+  }
+
+  /* The sidebar's own panels (History, Bookmarks...) sit beside the page as a card too. */
+  #sidebar-box {
+    background-color: var(--sam-container-low) !important;
+    border-radius: var(--sam-radius);
+    outline: 1px solid var(--sam-outline-variant);
+    outline-offset: -1px;
+    margin: 0 8px 8px 0;
+    overflow: clip;
+  }
+
+  /* ---- Menus and panels: rounded cards with Lexend ---- */
+
+  menupopup,
+  panel {
+    --panel-border-radius: var(--sam-radius);
+  }
+}

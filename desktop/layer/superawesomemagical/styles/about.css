@@ -1,0 +1,7 @@
+/* SuperAwesomeMagical Browser: Firefox's own pages (Settings, Add-ons and themes, Downloads...).
+ * theme.css gives them the colours and Lexend through Firefox's design tokens; this only puts the
+ * pages on the family's slate background. */
+
+:root:not([lwtheme]) body {
+  background-color: var(--sam-bg);
+}

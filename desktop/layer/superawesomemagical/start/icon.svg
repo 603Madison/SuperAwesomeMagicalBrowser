@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="44" fill="#5B3FD1"/>
+  <clipPath id="globe"><circle cx="240" cy="276" r="150"/></clipPath>
+  <g fill="none" stroke="#FFFFFF" stroke-width="26" stroke-linecap="round">
+    <g clip-path="url(#globe)">
+      <line x1="110.1" y1="201.0" x2="369.9" y2="201.0"/><line x1="90.0" y1="276.0" x2="390.0" y2="276.0"/><line x1="110.1" y1="351.0" x2="369.9" y2="351.0"/>
+      <ellipse cx="240" cy="276" rx="66" ry="150"/>
+    </g>
+    <circle cx="240" cy="276" r="137.0"/>
+  </g>
+  <polygon points="392.0,60.0 407.0,109.0 456.0,124.0 407.0,139.0 392.0,188.0 377.0,139.0 328.0,124.0 377.0,109.0" fill="#6EF2B0"/>
+</svg>
