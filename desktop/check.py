@@ -88,7 +88,9 @@ def main():
     xvfb = start_display()
     base = serve_pages()
     data = Path(tempfile.mkdtemp(prefix="samb-check-"))
-    env = dict(os.environ, XDG_DATA_HOME=str(data), MOZ_REMOTE_ALLOW_SYSTEM_ACCESS="1",
+    # A throwaway home too: Firefox won't start as root in a home owned by someone else, which is
+    # how CI's containers run (HOME is the runner's).
+    env = dict(os.environ, HOME=str(data), XDG_DATA_HOME=str(data / "share"), MOZ_REMOTE_ALLOW_SYSTEM_ACCESS="1",
                MOZ_CRASHREPORTER_DISABLE="1")
     print(f"Starting {args.launcher}")
     log = open(data / "browser.log", "w")

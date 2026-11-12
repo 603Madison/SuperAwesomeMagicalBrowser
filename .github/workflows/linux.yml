@@ -35,6 +35,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       firefox: ${{ steps.v.outputs.firefox }}
+      geckoview: ${{ steps.v.outputs.geckoview }}
       release: ${{ steps.v.outputs.release }}
       version: ${{ steps.v.outputs.version }}
       build: ${{ steps.v.outputs.build }}
@@ -48,13 +49,19 @@ jobs:
           RELEASE_INPUT: ${{ inputs.release }}
         run: |
           source desktop/release.env
-          ff=$FIREFOX_VERSION rel=$RELEASE build=true publish=false bumped=false
+          ff=$FIREFOX_VERSION gv=$GECKOVIEW_VERSION rel=$RELEASE build=true publish=false bumped=false
           if [ "$EVENT" = schedule ]; then
             latest=$(curl -fsSL --retry 5 https://product-details.mozilla.org/1.0/firefox_versions.json | jq -r .LATEST_FIREFOX_VERSION)
             newest=$(printf '%s\n%s\n' "$ff" "$latest" | sort -V | tail -1)
-            if [ "$latest" != "$ff" ] && [ "$newest" = "$latest" ]; then
-              echo "Firefox $latest is out (we have $ff)"
-              ff=$latest rel=1 publish=true bumped=true
+            # The same Firefox for Android: GeckoView <version>.<build ID> (published the same day).
+            latest_gv=$(curl -fsSL --retry 5 https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview/maven-metadata.xml |
+              grep -o "<version>$latest\.[0-9]*</version>" | sed 's/<[^>]*>//g' | sort -V | tail -1)
+            if [ "$latest" != "$ff" ] && [ "$newest" = "$latest" ] && [ -n "$latest_gv" ]; then
+              echo "Firefox $latest is out (we have $ff); GeckoView $latest_gv"
+              ff=$latest gv=$latest_gv rel=1 publish=true bumped=true
+            elif [ "$latest" != "$ff" ] && [ "$newest" = "$latest" ]; then
+              echo "Firefox $latest is out, but not GeckoView $latest yet; trying again next time"
+              build=false
             else
               echo "Still on the latest Firefox ($ff)"
               build=false
@@ -67,7 +74,7 @@ jobs:
             exit 1
           fi
           {
-            echo "firefox=$ff"; echo "release=$rel"; echo "version=$ff-$rel"
+            echo "firefox=$ff"; echo "geckoview=$gv"; echo "release=$rel"; echo "version=$ff-$rel"
             echo "build=$build"; echo "publish=$publish"; echo "bumped=$bumped"
           } | tee -a "$GITHUB_OUTPUT"
 
@@ -163,6 +170,7 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       FIREFOX: ${{ needs.version.outputs.firefox }}
+      GECKOVIEW: ${{ needs.version.outputs.geckoview }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -173,7 +181,8 @@ jobs:
       - name: Record the new Firefox in desktop/release.env
         if: needs.version.outputs.bumped == 'true'
         run: |
-          sed -i -e "s/^FIREFOX_VERSION=.*/FIREFOX_VERSION=$FIREFOX/" -e "s/^RELEASE=.*/RELEASE=1/" desktop/release.env
+          sed -i -e "s/^FIREFOX_VERSION=.*/FIREFOX_VERSION=$FIREFOX/" -e "s/^GECKOVIEW_VERSION=.*/GECKOVIEW_VERSION=$GECKOVIEW/" \
+            -e "s/^RELEASE=.*/RELEASE=1/" desktop/release.env
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "Follow Firefox $FIREFOX"
