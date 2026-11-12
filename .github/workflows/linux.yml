@@ -6,6 +6,7 @@
 # - Run workflow with "release" ticked: build, check and release the version in desktop/release.env.
 # - Every six hours: if Mozilla has released a newer Firefox, build, check and release it, and
 #   commit the new version to desktop/release.env. Firefox's security fixes come this way.
+# - After a release, the Android workflow adds the app to it (once its signing key is set up).
 name: Linux
 
 on:
@@ -167,8 +168,10 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      ANDROID_SIGNED: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
       FIREFOX: ${{ needs.version.outputs.firefox }}
       GECKOVIEW: ${{ needs.version.outputs.geckoview }}
       GH_TOKEN: ${{ github.token }}
@@ -199,3 +202,6 @@ jobs:
           fi
           gh release create "v$VERSION" --target "$(git rev-parse HEAD)" \
             --title "SuperAwesomeMagical Browser $VERSION" --notes-file "$notes" *
+      - name: Add the Android app to the release
+        if: env.ANDROID_SIGNED == 'true'
+        run: gh workflow run android.yml --ref "$GITHUB_REF_NAME" -f release=true

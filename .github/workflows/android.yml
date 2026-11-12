@@ -1,0 +1,86 @@
+# SuperAwesomeMagical Browser for Android: tests and builds the app on every change, and on a
+# release signs the APK and adds it to the release of the same version (made by the Linux
+# workflow, which starts this one after publishing; or Run workflow with "release" ticked).
+#
+# Signing needs the RELEASE_KEYSTORE_BASE64 and RELEASE_KEYSTORE_PASSWORD secrets (the key's alias
+# is "browser"). Every release must be signed with the same key, or installed copies can't update.
+name: Android
+
+on:
+  push:
+    paths: ["android/**", "desktop/release.env", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["android/**", "desktop/release.env", ".github/workflows/android.yml"]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Add the signed APK to the release of the version in desktop/release.env"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Signing key
+        env:
+          KEYSTORE: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "RELEASE_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "RELEASE_KEYSTORE_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No signing key (RELEASE_KEYSTORE_BASE64): the release APK is unsigned"
+          fi
+      - name: Test and build
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease
+      - name: Name the APKs
+        run: |
+          source desktop/release.env
+          mkdir dist
+          for abi in arm64-v8a x86_64; do
+            apk=$(ls android/app/build/outputs/apk/release/app-$abi-release*.apk | head -1)
+            cp "$apk" "dist/SuperAwesomeMagicalBrowser-$FIREFOX_VERSION-$RELEASE-android-$abi.apk"
+          done
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: dist/*.apk
+          compression-level: 0
+
+  release:
+    name: Add to the release
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SIGNED: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: apk, path: dist }
+      - name: Upload
+        run: |
+          if [ "$SIGNED" != true ]; then
+            echo "::error::Add the RELEASE_KEYSTORE_BASE64 and RELEASE_KEYSTORE_PASSWORD secrets to release the app (see CLAUDE.md)"
+            exit 1
+          fi
+          source desktop/release.env
+          tag="v$FIREFOX_VERSION-$RELEASE"
+          gh release view "$tag" >/dev/null || { echo "::error::No release $tag yet (the Linux workflow makes it)"; exit 1; }
+          gh release upload "$tag" dist/*.apk --clobber

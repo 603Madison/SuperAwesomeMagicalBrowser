@@ -1,7 +1,8 @@
 # SuperAwesomeMagical Browser
 
 Firefox in the SuperAwesomeMagical family's look: Lexend everywhere, the aurora's purple and green
-over cool slate, soft rounded cards, and your tabs down the left side.
+over cool slate, soft rounded cards, and your tabs down the left side. For Linux (Fedora- and
+Ubuntu-based) and Android.
 
 ![The start page in dark mode: a large Lexend clock and a rounded slate card with a search box and top sites, over a photo of purple and green northern lights; tabs run down the left](docs/screenshots/start-dark.jpg)
 
@@ -62,6 +63,24 @@ browser doesn't update itself: Firefox's own updater is off, as the package mana
 **Your data** lives in `~/.local/share/superawesomemagicalbrowser`. Firefox's Settings › Import
 brings bookmarks, history and passwords over from Firefox or another browser.
 
+## Android
+
+The same browser for phones and tablets, on GeckoView (Firefox's engine for Android, the same
+Firefox version as the Linux release). Install `SuperAwesomeMagicalBrowser-<version>-android-arm64-v8a.apk`
+from the release (the `x86_64` one is for the emulator and Chromebooks).
+
+- **Tabs on the left**: the tabs button at the left of the address bar opens them as a drawer
+  from the left; on a tablet they stay down the left side.
+- The **start page** with the big clock, Ecosia search and your most visited sites (hold one to
+  remove it), over the northern lights in dark mode.
+- Lexend and the family's colours throughout, light or dark with the phone.
+- **Private tabs**, Firefox's tracking protection with Total Cookie Protection, Global Privacy
+  Control, downloads to the Downloads folder, and it can be the phone's default browser.
+
+| | | | |
+|---|---|---|---|
+| ![The start page on a phone in dark mode: clock, search and site tiles over the northern lights](docs/screenshots/android-start-dark.jpg) | ![The tabs drawer open from the left in dark mode, the current tab in purple and a private tab marked](docs/screenshots/android-tabs-dark.jpg) | ![The start page in light mode over soft purple and green glows](docs/screenshots/android-start-light.jpg) | ![A web page in light mode under the rounded address bar](docs/screenshots/android-page-light.jpg) |
+
 ## How it's made
 
 It is **Mozilla's own Firefox**, downloaded from Mozilla and checked against Mozilla's signed
@@ -100,10 +119,17 @@ desktop/build.sh all        # ... and the .deb and the .rpm
 python3 desktop/check.py    # start it and check everything works (needs Xvfb if headless)
 ```
 
-`desktop/release.env` pins the Firefox version and our release number, and Lexend.
+`desktop/release.env` pins the Firefox version (and the matching GeckoView), our release
+number, and Lexend.
+
+The Android app is a Gradle project in `android/` (Kotlin and Jetpack Compose on GeckoView):
+
+```bash
+cd android && ./gradlew testDebugUnitTest assembleRelease
+```
 `tools/icons.py` draws the icon. CI (`.github/workflows/linux.yml`) builds and checks every
 change, tests the installed packages on Ubuntu 24.04, Debian 13 and Fedora, and publishes
-releases.
+releases; `.github/workflows/android.yml` tests the app and adds the signed APK to each release.
 
 ## Licence
 

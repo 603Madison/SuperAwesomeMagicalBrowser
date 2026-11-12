@@ -1,7 +1,8 @@
 # Notes for Claude
 
 SuperAwesomeMagical Browser is Mozilla's Firefox release with our files added beside Firefox's
-(`desktop/layer`), never changing any of Firefox's own. The README explains the layout; this is
+(`desktop/layer`), never changing any of Firefox's own, for Linux; and an Android app on
+GeckoView (`android/`) in the same look. The README explains the layout; this is
 what to know when changing it.
 
 ## Design
@@ -35,6 +36,22 @@ and Lexend; Ecosia is the default search engine (for now, the owner's choice).
 - `distribution/policies.json` (Ecosia, no updater, no telemetry) is why Settings says "managed by
   your organization"; that's expected.
 
+## The Android app (android/)
+
+Kotlin and Compose on GeckoView, one Gradle project. `Browser.kt` holds the tabs and all of
+GeckoView's delegates (progress, navigation, content, history, prompts); `ui/` is the interface
+(tabs in a left drawer on phones, a permanent left panel at 840dp and wider; the start page;
+dialogs). The version comes from `desktop/release.env` (versionName `FIREFOX-RELEASE`,
+versionCode from it, always rising), and so does the GeckoView version, which must be the same
+Firefox. GeckoView's API changes between versions: check signatures against its sources jar
+(`geckoview-<version>-sources.jar` on maven.mozilla.org) when bumping. GeckoView won't run
+runtime-registered JSWindowActors in web content processes either, so page features go through
+GeckoView's delegates.
+
+The APK must always be signed with the same key (alias `browser`), or installed copies can't
+update. It's not in git: CI reads `RELEASE_KEYSTORE_BASE64` and `RELEASE_KEYSTORE_PASSWORD`, local
+builds `android/keystore/release.properties` (git-ignored). Never generate a replacement.
+
 ## Checks before pushing
 
 ```bash
@@ -46,13 +63,17 @@ desktop/build.sh && python3 desktop/check.py
 screenshots (`--screenshots DIR`) after visual changes, light and dark. CI runs it on the tarball
 and on the installed .deb (Ubuntu 24.04, Debian 13) and .rpm (Fedora).
 
+For the Android app: `cd android && ./gradlew testDebugUnitTest lintDebug assembleRelease`.
+
 ## Releases
 
 `desktop/release.env` holds `FIREFOX_VERSION` and our `RELEASE` (package version
 `FIREFOX_VERSION-RELEASE`). The Linux workflow follows Firefox on its own (every six hours: new
 Firefox → build, check, release, commit the bump). For a release of our own changes, raise
 `RELEASE`, write `release-notes/vX-R.md`, push, then run the **Linux** workflow with *release*
-ticked (sessions can't push tags; the workflow makes the tag). Check every job is green.
+ticked (sessions can't push tags; the workflow makes the tag). It then starts the **Android**
+workflow, which adds the signed APKs to the same release. Check every job is green, and send the
+owner the APK in chat as well.
 
 ## Building in a Claude cloud sandbox
 
@@ -64,3 +85,8 @@ ticked (sessions can't push tags; the workflow makes the tag). Check every job i
   include popups (menus, panels): capture the X display (`import -window root`) for those, and
   remember Xvfb has no compositor, so popups lose their rounded corners there.
 - Link hand-off to a running browser goes over D-Bus; try it under `dbus-run-session`.
+- Android: command-line tools in `/opt/android-sdk/cmdline-tools/latest`, then
+  `sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"` and
+  `sdk.dir=/opt/android-sdk` in `android/local.properties` (git-ignored). Serve Maven Central from
+  Google's mirror with the init script in SuperAwesomeMagicalMusic's CLAUDE.md;
+  maven.mozilla.org (GeckoView, ~250 MB) is reachable directly.

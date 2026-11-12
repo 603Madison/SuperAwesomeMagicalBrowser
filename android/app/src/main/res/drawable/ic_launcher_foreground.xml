@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Drawn by tools/icons.py (the same globe and sparkle as the desktop icon); don't edit by hand. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group>
+        <clip-path android:pathData="M21.00,59.95 a27.05,27.05 0 1,0 54.10,0 a27.05,27.05 0 1,0 -54.10,0 z" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="4.69" android:strokeLineCap="round" android:fillColor="#00000000" android:pathData="M21.00,46.43 L75.10,46.43 M21.00,59.95 L75.10,59.95 M21.00,73.48 L75.10,73.48" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="4.69" android:strokeLineCap="round" android:fillColor="#00000000" android:pathData="M36.15,59.95 a11.90,27.05 0 1,0 23.80,0 a11.90,27.05 0 1,0 -23.80,0 z" />
+    </group>
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="4.69" android:strokeLineCap="round" android:fillColor="#00000000" android:pathData="M23.34,59.95 a24.70,24.70 0 1,0 49.41,0 a24.70,24.70 0 1,0 -49.41,0 z" />
+    <path android:fillColor="#FF6EF2B0" android:pathData="M75.46,21.00 L78.16,29.84 L87.00,32.54 L78.16,35.25 L75.46,44.08 L72.75,35.25 L63.92,32.54 L72.75,29.84 z" />
+</vector>

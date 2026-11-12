@@ -6,8 +6,8 @@ full-bleed rounded square).
     python3 tools/icons.py        (needs Pillow)
 
 Writes the SVG (hicolor/scalable) and PNGs at the sizes the Linux icon theme uses into
-desktop/linux/icons, the favicon of the start page, and Android's launcher foreground is drawn
-from the same numbers in android/ (see the comment there).
+desktop/linux/icons, the start page's favicon, and the Android app's adaptive icon (its foreground
+and monochrome layers; the violet background is android/.../drawable/ic_launcher_background.xml).
 """
 from pathlib import Path
 
@@ -88,6 +88,44 @@ def png(size: int) -> Image.Image:
     return im.resize((size, size), Image.LANCZOS)
 
 
+def android_vector(monochrome: bool) -> str:
+    """The globe and sparkle as an Android vector, fitted to the adaptive icon's 66dp safe zone."""
+    # The artwork's box on the 512 canvas (globe and sparkle together), mapped onto 21..87dp.
+    cx, cy, r = GLOBE
+    sx, sy, sr, sw = SPARKLE
+    left, top = cx - r, sy - sr
+    size = max(sx + sr - left, cy + r - top)
+    k = 66 / size
+    X = lambda x: 21 + (x - left) * k  # noqa: E731
+    Y = lambda y: 21 + (y - top) * k  # noqa: E731
+    gx, gy, gr, stroke = X(cx), Y(cy), r * k, STROKE * k
+    ring = gr - stroke / 2
+    mrx = MERIDIAN_RX * k
+    circle = lambda x, y, rx, ry: (f"M{x - rx:.2f},{y:.2f} a{rx:.2f},{ry:.2f} 0 1,0 {2 * rx:.2f},0 "  # noqa: E731
+                                   f"a{rx:.2f},{ry:.2f} 0 1,0 {-2 * rx:.2f},0 z")
+    lines = "".join(
+        f"M{gx - gr:.2f},{gy + f * gr:.2f} L{gx + gr:.2f},{gy + f * gr:.2f} " for f in LATITUDES
+    )
+    star = "M" + " L".join(f"{X(x):.2f},{Y(y):.2f}" for x, y in sparkle_points(*SPARKLE)) + " z"
+    stroke_attrs = (f'android:strokeColor="#FFFFFFFF" android:strokeWidth="{stroke:.2f}" '
+                    'android:strokeLineCap="round" android:fillColor="#00000000"')
+    green = "#FFFFFFFF" if monochrome else "#FF" + GREEN[1:]
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<!-- Drawn by tools/icons.py (the same globe and sparkle as the desktop icon); don't edit by hand. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group>
+        <clip-path android:pathData="{circle(gx, gy, gr, gr)}" />
+        <path {stroke_attrs} android:pathData="{lines.strip()}" />
+        <path {stroke_attrs} android:pathData="{circle(gx, gy, mrx, gr)}" />
+    </group>
+    <path {stroke_attrs} android:pathData="{circle(gx, gy, ring, ring)}" />
+    <path android:fillColor="{green}" android:pathData="{star}" />
+</vector>
+"""
+
+
 def main():
     (OUT / "scalable/apps").mkdir(parents=True, exist_ok=True)
     (OUT / f"scalable/apps/{APP_ID}.svg").write_text(svg())
@@ -97,6 +135,10 @@ def main():
         png(s).save(d / f"{APP_ID}.png", optimize=True)
     start = ROOT / "desktop/layer/superawesomemagical/start"
     (start / "icon.svg").write_text(svg())
+    res = ROOT / "android/app/src/main/res/drawable"
+    if res.is_dir():
+        (res / "ic_launcher_foreground.xml").write_text(android_vector(monochrome=False))
+        (res / "ic_launcher_monochrome.xml").write_text(android_vector(monochrome=True))
     print("icons written to", OUT)
 
 
