@@ -10,8 +10,11 @@ composeBom = "2026.09.00"
 coroutines = "1.10.2"
 junit = "4.13.2"
 robolectric = "4.17"
+# Security floor: AndroidX brings Guava 33.3 (CVE-2026-102554).
+guava = "33.7.2-android"
 
 [libraries]
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
