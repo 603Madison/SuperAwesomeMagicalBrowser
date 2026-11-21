@@ -36,6 +36,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Lock
@@ -95,14 +96,20 @@ import app.superawesomemagical.browser.Address
 import app.superawesomemagical.browser.Browser
 import app.superawesomemagical.browser.BrowserTab
 import app.superawesomemagical.browser.History
+import app.superawesomemagical.browser.Orchestrator
 import app.superawesomemagical.browser.PageDialog
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 
-/** What the screen asks of the activity: sharing and copying. */
+/**
+ * What the screen asks of the activity: sharing and copying, and handing a page (title, address)
+ * to SuperAwesomeMagicalOrchestrator's app when it's installed.
+ */
 class ScreenActions(
     val share: (String, String) -> Unit,
     val copy: (String) -> Unit,
+    val orchestratorInstalled: () -> Boolean = { false },
+    val sendToDevice: (String, String) -> Unit = { _, _ -> },
 )
 
 /**
@@ -297,6 +304,8 @@ private fun AddressField(browser: Browser, tab: BrowserTab, modifier: Modifier) 
 @Composable
 private fun Menu(browser: Browser, tab: BrowserTab, actions: ScreenActions) {
     var open by remember { mutableStateOf(false) }
+    // Looked up each time the menu opens: the orchestrator's app may have come or gone.
+    val sends = remember(open, tab.url) { open && Orchestrator.offers(actions.orchestratorInstalled(), tab.url) }
     Box {
         IconButton(onClick = { open = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "Menu") }
         DropdownMenu(
@@ -321,6 +330,9 @@ private fun Menu(browser: Browser, tab: BrowserTab, actions: ScreenActions) {
             MenuItem("New tab", Icons.Rounded.Add) { browser.newTab(); open = false }
             MenuItem("New private tab", PrivateGlyph) { browser.newTab(private = true); open = false }
             MenuItem("Close tab", Icons.Rounded.Close) { browser.close(tab); open = false }
+            if (sends) {
+                MenuItem("Send to device", Icons.AutoMirrored.Rounded.Send) { actions.sendToDevice(tab.title, tab.url); open = false }
+            }
         }
     }
 }
@@ -481,6 +493,9 @@ private fun PageDialogView(dialog: PageDialog, browser: Browser, actions: Screen
                             }
                             MenuItem("Copy link", CopyGlyph) { actions.copy(link); close() }
                             MenuItem("Share link", Icons.Rounded.Share) { actions.share("", link); close() }
+                            if (remember(link) { Orchestrator.offers(actions.orchestratorInstalled(), link) }) {
+                                MenuItem("Send to device", Icons.AutoMirrored.Rounded.Send) { actions.sendToDevice("", link); close() }
+                            }
                         }
                         dialog.image?.let { image ->
                             MenuItem("Open image in new tab", Icons.Rounded.Add) { browser.newTab(image, dialog.tab.private, dialog.tab.id, select = false); close() }

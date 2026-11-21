@@ -12,6 +12,7 @@ if (privileged) {
   ChromeUtils.defineESModuleGetters(lazy, {
     NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
     SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
+    Orchestrator: "resource://superawesomemagical/modules/Orchestrator.sys.mjs",
   });
 }
 
@@ -176,13 +177,88 @@ async function refresh() {
   showSites(await topSites());
 }
 
+// ---- Carry on: what the person's other devices are doing, and the family's apps ----
+// From SuperAwesomeMagicalOrchestrator's agent on this computer (modules/Orchestrator.sys.mjs), if
+// there is one. The page never waits for it: the section is filled in when the agent answers, and
+// stays away if it has nothing or takes longer than two seconds. Only web addresses come through,
+// and every name and title goes in as text.
+
+const CARRY_ON_WAIT = 2000;
+let carryOnAsked = 0;
+
+function hideCarryOn() {
+  $("carry-on").hidden = true;
+  $("activities").replaceChildren();
+  $("apps").replaceChildren();
+}
+
+async function carryOn() {
+  if (!privileged || !lazy.Orchestrator.carryOnEnabled) {
+    hideCarryOn();
+    return;
+  }
+  const asked = ++carryOnAsked;
+  const late = new Promise(resolve => setTimeout(resolve, CARRY_ON_WAIT, null));
+  let found = null;
+  try {
+    found = await Promise.race([lazy.Orchestrator.carryOn(), late]);
+  } catch (e) {
+    console.error(e);
+  }
+  if (asked !== carryOnAsked) {
+    return;
+  }
+  const isWeb = entry => /^https?:\/\//i.test(entry?.url ?? "");
+  const activities = (found?.activities ?? []).filter(isWeb);
+  const apps = (found?.apps ?? []).filter(isWeb);
+  if (!activities.length && !apps.length) {
+    // Nothing (or no answer in time): leave what's showing alone unless there's nothing to show.
+    if (found) {
+      hideCarryOn();
+    }
+    return;
+  }
+
+  const template = $("activity");
+  $("activities").replaceChildren(
+    ...activities.map(activity => {
+      const item = template.content.firstElementChild.cloneNode(true);
+      const link = item.querySelector("a");
+      link.href = activity.url;
+      link.title = activity.url;
+      item.querySelector(".activity-title").textContent = activity.title;
+      item.querySelector(".activity-where").textContent = [activity.app, activity.device].filter(Boolean).join(" on ");
+      return item;
+    })
+  );
+  $("activities").hidden = !activities.length;
+  $("carry-on-heading").hidden = !activities.length;
+  $("apps").replaceChildren(
+    ...apps.map(app => {
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.className = "app";
+      link.href = app.url;
+      link.title = app.url;
+      link.textContent = app.name;
+      item.append(link);
+      return item;
+    })
+  );
+  $("apps").hidden = !apps.length;
+  $("apps-heading").hidden = !apps.length;
+  $("carry-on").hidden = false;
+}
+
 // A preloaded or restored tab is shown later; bring the clock and the sites up to date then.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     tick();
     refresh();
+    carryOn();
   }
 });
 
 tick();
 refresh();
+carryOn();

@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity(), BrowserHost {
             }
         }
 
-        val actions = ScreenActions(share = ::share, copy = ::copy)
+        val actions = ScreenActions(share = ::share, copy = ::copy, orchestratorInstalled = { Orchestrator.installed(this) }, sendToDevice = ::sendToDevice)
         setContent {
             BrowserTheme {
                 BrowserScreen(browser, app.history, messages, actions) { modifier ->
@@ -158,6 +158,16 @@ class MainActivity : ComponentActivity(), BrowserHost {
         val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url)
         if (title.isNotBlank()) send.putExtra(Intent.EXTRA_SUBJECT, title)
         startActivity(Intent.createChooser(send, null))
+    }
+
+    /** To SuperAwesomeMagicalOrchestrator's app, which asks which device. Only ever from the menu. */
+    private fun sendToDevice(title: String, url: String) {
+        val send = Orchestrator.sendIntent(url, title) ?: return
+        try {
+            startActivity(send)
+        } catch (e: ActivityNotFoundException) {
+            message("SuperAwesomeMagicalOrchestrator couldn't take that")
+        }
     }
 
     private fun copy(text: String) {

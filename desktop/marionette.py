@@ -54,6 +54,29 @@ class Marionette:
         wrapped = "return (async () => {\n" + script + "\n})();"
         return self.command("WebDriver:ExecuteScript", {"script": wrapped, "args": list(args)}).get("value")
 
+    def right_click(self, selector, content=False):
+        """Right-clicks an element, as a person would: in the window, or in the page it shows."""
+        if content:
+            # In the tab that's showing (Marionette otherwise stays with the tab it started in).
+            showing = self.js("return gBrowser.selectedBrowser.currentURI.spec;")
+            self.command("Marionette:SetContext", {"value": "content"})
+        try:
+            if content:
+                for handle in self.command("WebDriver:GetWindowHandles"):
+                    self.command("WebDriver:SwitchToWindow", {"handle": handle, "focus": False})
+                    if self.command("WebDriver:GetCurrentURL")["value"] == showing:
+                        break
+                else:
+                    raise RuntimeError(f"no tab is showing {showing}")
+            found = self.command("WebDriver:FindElement", {"using": "css selector", "value": selector})["value"]
+            self.command("WebDriver:PerformActions", {"actions": [{
+                "type": "pointer", "id": "mouse", "parameters": {"pointerType": "mouse"},
+                "actions": [{"type": "pointerMove", "origin": found, "x": 0, "y": 0},
+                            {"type": "pointerDown", "button": 2}, {"type": "pointerUp", "button": 2}]}]})
+            self.command("WebDriver:ReleaseActions")
+        finally:
+            self.command("Marionette:SetContext", {"value": "chrome"})
+
     def screenshot(self, path):
         data = self.command("WebDriver:TakeScreenshot", {"full": False, "hash": False})["value"]
         with open(path, "wb") as f:

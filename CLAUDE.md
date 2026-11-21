@@ -29,6 +29,16 @@ and Lexend; Ecosia is the default search engine (for now, the owner's choice).
   parent process with privileges, like Settings. Firefox 160 refuses JSWindowActors registered at
   runtime in web content processes, which is why it isn't an unprivileged page with an actor.
   Put text from outside into it only as text/attributes, never markup.
+- `Orchestrator.sys.mjs` is all the browser does with SuperAwesomeMagicalOrchestrator: the "Send
+  page/link/tab to…" menus and the start page's "Carry on", through the agent's command
+  (`sam-orchestrator status|devices|activities|apps --json`, `send-link -- <id> <url>`; ids are
+  base64url and can start with a dash, hence the `--`). Always `Subprocess` with a list of
+  arguments, http(s) addresses only, names as label attributes or text, and asked only when a menu
+  or the start page opens. **It never publishes what's being browsed** (no `PublishActivity`):
+  nothing leaves without a choice in a menu. `check.py` stands in for the agent through
+  `SAM_ORCHESTRATOR_COMMAND` (an environment variable, so no page or pref can point it elsewhere).
+  The confirmation uses Firefox's `ConfirmationHint`, which only takes Fluent ids: ours are in
+  `superawesomemagical/localization/`, registered as an `L10nFileSource` on first use.
 - New profiles go through Firefox's old toolbar migrations, which move the sidebar button to the
   end; `arrangeToolbar` fixes the order once per profile.
 - Window titles say "SuperAwesomeMagical Browser" (`nameWindow`); About Firefox still says Firefox,
@@ -41,7 +51,9 @@ and Lexend; Ecosia is the default search engine (for now, the owner's choice).
 Kotlin and Compose on GeckoView, one Gradle project. `Browser.kt` holds the tabs and all of
 GeckoView's delegates (progress, navigation, content, history, prompts); `ui/` is the interface
 (tabs in a left drawer on phones, a permanent left panel at 840dp and wider; the start page;
-dialogs). The version comes from `desktop/release.env` (versionName `FIREFOX-RELEASE`,
+dialogs). `Orchestrator.kt` is "Send to device": an explicit `ACTION_SEND` to the orchestrator's
+app (`app.superawesomemagical.orchestrator`, in the manifest's `<queries>`), offered only when it's
+installed and the address is http(s). The version comes from `desktop/release.env` (versionName `FIREFOX-RELEASE`,
 versionCode from it, always rising), and so does the GeckoView version, which must be the same
 Firefox. GeckoView's API changes between versions: check signatures against its sources jar
 (`geckoview-<version>-sources.jar` on maven.mozilla.org) when bumping. GeckoView won't run

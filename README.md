@@ -15,6 +15,12 @@ Ubuntu-based) and Android.
 - **A start page like the sign-in screen.** A big Lexend clock, search and your most visited sites
   over the northern lights (soft purple and green glows in light mode). Hover a site for × to
   remove it.
+- **Your other devices.** With
+  [SuperAwesomeMagicalOrchestrator](https://github.com/603Madison/SAM-DeviceOrchestrator) on the
+  computer and signed in: *Send page to…*, *Send link to…* and *Send tab to…* in the page's and
+  tabs' menus open it on the device you pick, and the start page gains *Carry on* (what your other
+  devices are doing, and your apps). Nothing about your browsing is sent unless you choose it from
+  a menu. On Android, *Send to device* in the menu hands the page to the orchestrator's app.
 - **Ecosia** is the search engine (change it in Settings › Search).
 - **Quiet.** No telemetry, studies, sponsored shortcuts or stories. Global Privacy Control is on.
 - **Its own profile**, so it never mixes with a separately installed Firefox.
@@ -96,6 +102,9 @@ checksums, with **none of its files changed**. Everything ours is added beside t
   its interface is drawn with) to the family's colours and Lexend; `browser.css` lays out the
   window (one slate surface with the page as a card); `about.css` is for Firefox's own pages.
 - `superawesomemagical/start`: the start page.
+- `superawesomemagical/modules/Orchestrator.sys.mjs`: "Send to device" and "Carry on". It asks
+  SuperAwesomeMagicalOrchestrator's agent through its command (`/usr/bin/sam-orchestrator`), only
+  when a menu or the start page opens, and shows nothing when the agent isn't there or signed in.
 - `distribution/policies.json`: Firefox's
   [enterprise policies](https://mozilla.github.io/policy-templates/) for what preferences can't
   do: no telemetry or studies, no updater, Ecosia as the default search engine (set once; you can
@@ -106,7 +115,10 @@ checksums, with **none of its files changed**. Everything ours is added beside t
 
 Picking another theme in Add-ons and themes switches the SuperAwesomeMagical look off, so that
 theme shows as its author meant. Firefox's own new tab page is one preference away
-(`superawesomemagical.startpage.enabled` in about:config).
+(`superawesomemagical.startpage.enabled` in about:config). There too:
+`superawesomemagical.orchestrator.send` (the "Send … to…" menus) and
+`superawesomemagical.orchestrator.carryOn` (the start page's "Carry on"), both on unless you turn
+them off.
 
 ## Building
 

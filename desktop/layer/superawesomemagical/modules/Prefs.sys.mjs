@@ -61,6 +61,12 @@ export const DEFAULT_PREFS = {
   // ---- The start page (start/) as new tab and home page; false for Firefox's own ----
   "superawesomemagical.startpage.enabled": true,
 
+  // ---- SuperAwesomeMagicalOrchestrator, where its agent is installed and signed in ----
+  // "Send page/link/tab to…" one of your other devices, in the page's and tabs' menus.
+  "superawesomemagical.orchestrator.send": true,
+  // "Carry on" on the start page: what your other devices are doing, and the family's apps.
+  "superawesomemagical.orchestrator.carryOn": true,
+
   // ---- Quiet, private defaults (telemetry and studies are off by policy) ----
   "browser.aboutwelcome.enabled": false,
   "browser.shell.checkDefaultBrowser": false,

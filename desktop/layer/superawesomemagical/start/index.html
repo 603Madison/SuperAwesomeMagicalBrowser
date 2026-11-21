@@ -32,6 +32,14 @@
       </form>
       <ul id="sites" class="sites" aria-label="Top sites"></ul>
     </section>
+
+    <!-- From SuperAwesomeMagicalOrchestrator, when it's on this computer and has something. -->
+    <section id="carry-on" class="card carry-on" aria-label="From your other devices" hidden>
+      <h2 id="carry-on-heading">Carry on</h2>
+      <ul id="activities" class="activities" aria-labelledby="carry-on-heading"></ul>
+      <h2 id="apps-heading">Your apps</h2>
+      <ul id="apps" class="apps" aria-labelledby="apps-heading"></ul>
+    </section>
   </main>
 
   <footer>
@@ -47,6 +55,15 @@
       <button class="remove" type="button" title="Remove from start page" aria-label="Remove">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.7 5.3 12 10.6l5.3-5.3a1 1 0 1 1 1.4 1.4L13.4 12l5.3 5.3a1 1 0 0 1-1.4 1.4L12 13.4l-5.3 5.3a1 1 0 0 1-1.4-1.4l5.3-5.3-5.3-5.3a1 1 0 0 1 1.4-1.4Z"/></svg>
       </button>
+    </li>
+  </template>
+
+  <template id="activity">
+    <li>
+      <a class="activity">
+        <span class="activity-title"></span>
+        <span class="activity-where"></span>
+      </a>
     </li>
   </template>
 </body>

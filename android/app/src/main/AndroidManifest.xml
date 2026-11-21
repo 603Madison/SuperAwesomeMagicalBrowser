@@ -4,6 +4,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- "Send to device" is offered only when SuperAwesomeMagicalOrchestrator's app is installed. -->
+    <queries>
+        <package android:name="app.superawesomemagical.orchestrator" />
+    </queries>
+
     <application
         android:name=".BrowserApplication"
         android:allowBackup="false"

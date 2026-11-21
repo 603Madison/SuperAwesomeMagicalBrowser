@@ -8,12 +8,19 @@
  *   SAMAboutTheme window actor.
  * - The start page (start/, registered as chrome://superawesomemagical/content/) as the new tab
  *   page and the default home page.
+ * - "Send to device" in the page's and tabs' menus (Orchestrator.sys.mjs, loaded with the first
+ *   window, and asking the orchestrator's agent nothing until a menu opens).
  *
  * It runs very early (while preferences are first read), so it registers things and leaves the
  * rest to observers.
  */
 
 import { setDefaultPrefs } from "resource://superawesomemagical/modules/Prefs.sys.mjs";
+
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  Orchestrator: "resource://superawesomemagical/modules/Orchestrator.sys.mjs",
+});
 
 const ROOT = "resource://superawesomemagical/";
 export const START_URL = "chrome://superawesomemagical/content/index.html";
@@ -92,6 +99,11 @@ export const Startup = {
           subject.gInitialPages.push(START_URL);
         }
         this.arrangeToolbar(subject);
+        try {
+          lazy.Orchestrator.attach(subject);
+        } catch (e) {
+          console.error("SuperAwesomeMagical: could not add Send to device", e);
+        }
         break;
     }
   },
