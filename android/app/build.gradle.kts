@@ -15,7 +15,9 @@ val release = Properties().apply {
 val firefoxVersion: String = release.getProperty("FIREFOX_VERSION")
 val releaseNumber: Int = release.getProperty("RELEASE").toInt()
 val geckoviewVersion: String = release.getProperty("GECKOVIEW_VERSION")
-check(geckoviewVersion.startsWith("$firefoxVersion.")) {
+// GeckoView is <major>.<minor>.<build ID>, also for dot releases (Firefox 160.0.1 is GeckoView
+// 160.0.20261116130455).
+check(Regex("""\Q${firefoxVersion.split(".").take(2).joinToString(".")}\E\.\d{14}""").matches(geckoviewVersion)) {
     "GECKOVIEW_VERSION ($geckoviewVersion) isn't Firefox $firefoxVersion"
 }
 

@@ -54,9 +54,22 @@ jobs:
           if [ "$EVENT" = schedule ]; then
             latest=$(curl -fsSL --retry 5 https://product-details.mozilla.org/1.0/firefox_versions.json | jq -r .LATEST_FIREFOX_VERSION)
             newest=$(printf '%s\n%s\n' "$ff" "$latest" | sort -V | tail -1)
-            # The same Firefox for Android: GeckoView <version>.<build ID> (published the same day).
-            latest_gv=$(curl -fsSL --retry 5 https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview/maven-metadata.xml |
-              grep -o "<version>$latest\.[0-9]*</version>" | sed 's/<[^>]*>//g' | sort -V | tail -1)
+            # The same Firefox for Android: GeckoView <major>.<minor>.<build ID> (published the same
+            # day). A dot release keeps its major.minor (Firefox 160.0.1 is GeckoView
+            # 160.0.20261116130455), so match the build ID from Mozilla's release candidates.
+            latest_gv=
+            if [ "$latest" != "$ff" ] && [ "$newest" = "$latest" ]; then
+              cand="https://archive.mozilla.org/pub/firefox/candidates/$latest-candidates"
+              gv_versions=$(curl -fsSL --retry 5 https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview/maven-metadata.xml |
+                grep -o '<version>[^<]*</version>' | sed 's/<[^>]*>//g')
+              for b in $(curl -fsSL --retry 5 "$cand/" | grep -o 'build[0-9]*/' | tr -d / | sort -uV -r); do
+                id=$(curl -fsSL --retry 5 "$cand/$b/linux-x86_64/en-US/firefox-$latest.json" | jq -r .buildid) || continue
+                if printf '%s\n' "$gv_versions" | grep -qx "$(echo "$latest" | cut -d. -f1,2)\.$id"; then
+                  latest_gv="$(echo "$latest" | cut -d. -f1,2).$id"
+                  break
+                fi
+              done
+            fi
             if [ "$latest" != "$ff" ] && [ "$newest" = "$latest" ] && [ -n "$latest_gv" ]; then
               echo "Firefox $latest is out (we have $ff); GeckoView $latest_gv"
               ff=$latest gv=$latest_gv rel=1 publish=true bumped=true
