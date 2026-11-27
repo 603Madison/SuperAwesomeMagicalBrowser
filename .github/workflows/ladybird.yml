@@ -1,0 +1,73 @@
+# Builds Ladybird with our patches (desktop/ladybird/build-ladybird.sh), for Fedora (its own Qt) and for Ubuntu 24.04
+# and newer (Qt built along, as Ladybird's AppImage has it). The Linux workflow calls this and packages the result.
+#
+# A first build compiles everything Ladybird depends on (Skia, FFmpeg, ICU... and Qt for Ubuntu) and takes hours on
+# GitHub's 4-core machines. What it compiled is cached (vcpkg's packages and ccache's objects), so the next builds
+# take far less; a build that runs out of time still saves its cache, and running again carries on from there.
+name: Ladybird
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Ladybird for ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Fedora, image: "registry.fedoraproject.org/fedora:44", system: fedora-44 }
+          - { name: Ubuntu, image: "ubuntu:24.04", system: ubuntu-24.04 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make room on the runner
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
+            /usr/share/swift /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
+          sudo docker image prune --all --force > /dev/null || true
+          df -h /
+
+      - name: The Ladybird release we build
+        id: v
+        run: |
+          source desktop/release.env
+          echo "ladybird=$LADYBIRD_VERSION" >> "$GITHUB_OUTPUT"
+          # Patches and the build script change what's compiled, but ccache sorts that out: the key only says whose cache.
+          echo "key=ladybird-${{ matrix.system }}-$LADYBIRD_VERSION-${{ hashFiles('desktop/ladybird/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/cache
+          key: ${{ steps.v.outputs.key }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ steps.v.outputs.key }}-
+            ladybird-${{ matrix.system }}-${{ steps.v.outputs.ladybird }}-
+            ladybird-${{ matrix.system }}-
+
+      - name: Build
+        timeout-minutes: 325
+        run: |
+          mkdir -p "$RUNNER_TEMP/cache" out
+          docker run --rm --ulimit core=0 -v "$PWD:/w:ro" -v "$RUNNER_TEMP/cache:/cache" -v "$PWD/out:/out" \
+            "${{ matrix.image }}" /w/desktop/ladybird/build-ladybird.sh /out /cache
+
+      - name: Save the build cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/cache
+          key: ${{ steps.v.outputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ladybird-${{ matrix.system }}
+          path: out/*
+          compression-level: 0
