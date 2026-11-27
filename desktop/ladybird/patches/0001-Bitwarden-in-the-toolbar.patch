@@ -43,7 +43,7 @@ index 6bbc856b..bd61f9bc 100644
      view_clear_node_picker(u64 view_id) =|
 diff --git a/UI/Qt/Bitwarden.cpp b/UI/Qt/Bitwarden.cpp
 new file mode 100644
-index 00000000..f7e5a634
+index 00000000..f3810502
 --- /dev/null
 +++ b/UI/Qt/Bitwarden.cpp
 @@ -0,0 +1,737 @@
@@ -576,7 +576,7 @@ index 00000000..f7e5a634
 +    auto* code_layout = new QHBoxLayout(code_row);
 +    code_layout->setContentsMargins(0, 0, 0, 0);
 +    code_layout->setSpacing(6);
-+    auto* code = new_field(code_row, "Two-step code, if you use one", false);
++    auto* code = new_field(code_row, "Two-step code (if any)", false);
 +    auto* code_method = new QComboBox(code_row);
 +    code_method->setObjectName("LadybirdBookmarkPopoverFolder");
 +    code_method->setAccessibleName("Two-step login with");

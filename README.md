@@ -29,7 +29,8 @@ Ubuntu-based), and an Android app in the same look.
 | | |
 |---|---|
 | ![A web page in dark mode: slate sidebar of tabs with the selected one highlighted, the page beside it](docs/screenshots/page-dark.jpg) | ![The same in light mode: lavender sidebar of tabs](docs/screenshots/page-light.jpg) |
-| ![The start page in light mode: the clock and card over soft purple and green glows](docs/screenshots/start-light.jpg) | |
+| ![The start page in light mode: the clock and card over soft purple and green glows](docs/screenshots/start-light.jpg) | ![Bitwarden's panel under the key button in dark mode, offering two logins for the site to fill in, with Lock, Open vault and Done](docs/screenshots/bitwarden-dark.jpg) |
+| ![Bitwarden's sign-in panel in dark mode: server, sign-in method, email, master password and two-step code](docs/screenshots/bitwarden-signin-dark.jpg) | |
 
 Ladybird is in alpha: some sites don't work yet, it crashes now and then, and its makers make no
 promises about its security yet.
