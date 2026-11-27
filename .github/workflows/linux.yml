@@ -1,12 +1,13 @@
-# SuperAwesomeMagical Browser for Linux: builds the tarball, the .deb and the .rpm, checks each
-# (desktop/check.py, on the tarball and on the packages installed in Ubuntu, Debian and Fedora),
-# and publishes them as a GitHub release.
+# SuperAwesomeMagical Browser for Linux: Ladybird (from Ladybird's own repositories, which keep it up
+# to date) with our presets, start page and Lexend. This builds the .deb and the .rpm, installs each
+# with Ladybird in Ubuntu and Fedora and runs desktop/check.py there, and publishes releases.
 #
 # - Every push and pull request: build and check.
 # - Run workflow with "release" ticked: build, check and release the version in desktop/release.env.
-# - Every six hours: if Mozilla has released a newer Firefox, build, check and release it, and
-#   commit the new version to desktop/release.env. Firefox's security fixes come this way.
-# - After a release, the Android workflow adds the app to it (once its signing key is set up).
+#   Tick "prerelease" too to publish it without making it the latest release, which is the one
+#   SuperAwesomeMagicalLinux's image installs; run again with "release" alone to make it the latest.
+#
+# Ladybird's own updates need nothing from here: they come with the system's package updates.
 name: Linux
 
 on:
@@ -17,11 +18,13 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: "Publish a release of the version in desktop/release.env"
+        description: "Release the version in desktop/release.env"
         type: boolean
         default: false
-  schedule:
-    - cron: "23 */6 * * *"
+      prerelease:
+        description: "...as a pre-release (not the latest, which SuperAwesomeMagicalLinux installs)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,173 +38,138 @@ jobs:
     name: Version
     runs-on: ubuntu-24.04
     outputs:
-      firefox: ${{ steps.v.outputs.firefox }}
-      geckoview: ${{ steps.v.outputs.geckoview }}
-      release: ${{ steps.v.outputs.release }}
       version: ${{ steps.v.outputs.version }}
-      build: ${{ steps.v.outputs.build }}
       publish: ${{ steps.v.outputs.publish }}
-      bumped: ${{ steps.v.outputs.bumped }}
+      promote: ${{ steps.v.outputs.promote }}
     steps:
       - uses: actions/checkout@v4
       - id: v
         env:
-          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_INPUT: ${{ inputs.release }}
+          PRERELEASE_INPUT: ${{ inputs.prerelease }}
         run: |
           source desktop/release.env
-          ff=$FIREFOX_VERSION gv=$GECKOVIEW_VERSION rel=$RELEASE build=true publish=false bumped=false
-          if [ "$EVENT" = schedule ]; then
-            latest=$(curl -fsSL --retry 5 https://product-details.mozilla.org/1.0/firefox_versions.json | jq -r .LATEST_FIREFOX_VERSION)
-            newest=$(printf '%s\n%s\n' "$ff" "$latest" | sort -V | tail -1)
-            # The same Firefox for Android: GeckoView <version>.<build ID> (published the same day).
-            latest_gv=$(curl -fsSL --retry 5 https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview/maven-metadata.xml |
-              grep -o "<version>$latest\.[0-9]*</version>" | sed 's/<[^>]*>//g' | sort -V | tail -1)
-            if [ "$latest" != "$ff" ] && [ "$newest" = "$latest" ] && [ -n "$latest_gv" ]; then
-              echo "Firefox $latest is out (we have $ff); GeckoView $latest_gv"
-              ff=$latest gv=$latest_gv rel=1 publish=true bumped=true
-            elif [ "$latest" != "$ff" ] && [ "$newest" = "$latest" ]; then
-              echo "Firefox $latest is out, but not GeckoView $latest yet; trying again next time"
-              build=false
-            else
-              echo "Still on the latest Firefox ($ff)"
-              build=false
-            fi
-          elif [ "$EVENT" = workflow_dispatch ] && [ "$RELEASE_INPUT" = true ]; then
+          version="$VERSION-$RELEASE" publish=false promote=false
+          if [ "$RELEASE_INPUT" = true ]; then
             publish=true
+            if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+              # Already out as a pre-release: make that one the latest, as it is.
+              if [ "$PRERELEASE_INPUT" != true ] && [ "$(gh release view "v$version" --json isPrerelease -q .isPrerelease)" = true ]; then
+                publish=false promote=true
+              else
+                echo "::error::v$version is already released; raise RELEASE in desktop/release.env"
+                exit 1
+              fi
+            fi
           fi
-          if [ "$publish" = true ] && git ls-remote --exit-code --tags origin "refs/tags/v$ff-$rel" >/dev/null; then
-            echo "::error::v$ff-$rel is already released; raise RELEASE in desktop/release.env"
-            exit 1
-          fi
-          {
-            echo "firefox=$ff"; echo "geckoview=$gv"; echo "release=$rel"; echo "version=$ff-$rel"
-            echo "build=$build"; echo "publish=$publish"; echo "bumped=$bumped"
-          } | tee -a "$GITHUB_OUTPUT"
+          { echo "version=$version"; echo "publish=$publish"; echo "promote=$promote"; } | tee -a "$GITHUB_OUTPUT"
 
-  deb:
-    name: Tarball and .deb
+  build:
+    name: Build
     needs: version
-    if: needs.version.outputs.build == 'true'
+    if: needs.version.outputs.promote != 'true'
     runs-on: ubuntu-24.04
-    env:
-      SAM_FIREFOX_VERSION: ${{ needs.version.outputs.firefox }}
-      SAM_RELEASE: ${{ needs.version.outputs.release }}
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y xvfb
-      - run: desktop/build.sh deb
-      - name: Check the browser
-        run: env -u DISPLAY python3 desktop/check.py --screenshots desktop/out/screenshots
+      - run: sudo apt-get update && sudo apt-get install -y rpm
+      - run: desktop/build.sh all
       - uses: actions/upload-artifact@v4
         with:
-          name: deb
+          name: packages
           path: |
             desktop/out/*.deb
-            desktop/out/*.tar.xz
-          compression-level: 0
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: screenshots
-          path: desktop/out/screenshots
-
-  rpm:
-    name: .rpm
-    needs: version
-    if: needs.version.outputs.build == 'true'
-    runs-on: ubuntu-24.04
-    container: registry.fedoraproject.org/fedora:latest
-    env:
-      SAM_FIREFOX_VERSION: ${{ needs.version.outputs.firefox }}
-      SAM_RELEASE: ${{ needs.version.outputs.release }}
-    steps:
-      - run: dnf install -y rpm-build gnupg2 curl xz tar findutils gawk git-core
-      - uses: actions/checkout@v4
-      - run: desktop/build.sh rpm
-      - uses: actions/upload-artifact@v4
-        with:
-          name: rpm
-          path: desktop/out/*.rpm
-          compression-level: 0
+            desktop/out/*.rpm
 
   test-deb:
     name: Installed on ${{ matrix.image }}
-    needs: deb
+    needs: build
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        image: ["ubuntu:24.04", "debian:13"]
+        include:
+          - { image: "ubuntu:24.04", suite: noble }
+          - { image: "ubuntu:26.04", suite: resolute }
     container:
       image: ${{ matrix.image }}
       options: --shm-size=2g
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: deb }
-      - name: Install the package (and what the check needs)
+        with: { name: packages }
+      - name: Ladybird's repository, as its download page has it
+        run: |
+          apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl
+          install -d /etc/apt/keyrings
+          curl -fsSL https://apt.ladybird.org/ladybird.asc -o /etc/apt/keyrings/ladybird.asc
+          curl -fsSL https://apt.ladybird.org/ladybird-${{ matrix.suite }}.sources -o /etc/apt/sources.list.d/ladybird.sources
+      - name: Install the package (it brings Ladybird) and what the check needs
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y ./superawesomemagicalbrowser_*.deb xvfb python3 fonts-dejavu-core
-      - run: python3 desktop/check.py /usr/bin/superawesomemagicalbrowser
+          DEBIAN_FRONTEND=noninteractive apt-get install -y ./superawesomemagicalbrowser_*_all.deb xvfb imagemagick
+      - run: python3 desktop/check.py --screenshots screenshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-${{ matrix.suite }}
+          path: screenshots
 
   test-rpm:
-    name: Installed on Fedora
-    needs: rpm
+    name: Installed on ${{ matrix.image }}
+    needs: build
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["registry.fedoraproject.org/fedora:44", "registry.fedoraproject.org/fedora:45"]
     container:
-      image: registry.fedoraproject.org/fedora:latest
+      image: ${{ matrix.image }}
       options: --shm-size=2g
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: rpm }
-      - name: Install the package (and what the check needs)
-        run: dnf install -y ./superawesomemagicalbrowser-*.rpm xorg-x11-server-Xvfb python3 dejavu-sans-fonts
-      - run: python3 desktop/check.py /usr/bin/superawesomemagicalbrowser
+        with: { name: packages }
+      - name: Ladybird's repository, as its download page has it
+        run: curl -fsSL https://rpm.ladybird.org/ladybird.repo -o /etc/yum.repos.d/ladybird.repo
+      - name: Install the package (it brings Ladybird) and what the check needs
+        run: dnf install -y ./superawesomemagicalbrowser-*.x86_64.rpm xorg-x11-server-Xvfb python3
+      - run: python3 desktop/check.py
 
   release:
     name: Release
-    needs: [version, deb, rpm, test-deb, test-rpm]
+    needs: [version, build, test-deb, test-rpm]
     if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-      actions: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      ANDROID_SIGNED: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
-      FIREFOX: ${{ needs.version.outputs.firefox }}
-      GECKOVIEW: ${{ needs.version.outputs.geckoview }}
+      PRERELEASE: ${{ inputs.prerelease }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: deb, path: dist }
-      - uses: actions/download-artifact@v4
-        with: { name: rpm, path: dist }
-      - name: Record the new Firefox in desktop/release.env
-        if: needs.version.outputs.bumped == 'true'
-        run: |
-          sed -i -e "s/^FIREFOX_VERSION=.*/FIREFOX_VERSION=$FIREFOX/" -e "s/^GECKOVIEW_VERSION=.*/GECKOVIEW_VERSION=$GECKOVIEW/" \
-            -e "s/^RELEASE=.*/RELEASE=1/" desktop/release.env
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Follow Firefox $FIREFOX"
-          git push
+        with: { name: packages, path: dist }
       - name: Publish
         run: |
           cd dist
           sha256sum * > SHA256SUMS
           notes=../release-notes/v$VERSION.md
-          if [ ! -f "$notes" ]; then
-            notes=$(mktemp)
-            printf 'SuperAwesomeMagical Browser on Firefox %s ([Firefox %s release notes](https://www.mozilla.org/firefox/%s/releasenotes/)).\n\nInstall the `.rpm` on Fedora-based systems or the `.deb` on Ubuntu- and Debian-based ones; see the README.\n' \
-              "$FIREFOX" "$FIREFOX" "$FIREFOX" > "$notes"
-          fi
-          gh release create "v$VERSION" --target "$(git rev-parse HEAD)" \
+          [ -f "$notes" ] || { echo "::error::Write $notes first"; exit 1; }
+          flags=(--latest)
+          [ "$PRERELEASE" = true ] && flags=(--prerelease --latest=false)
+          gh release create "v$VERSION" --target "$(git rev-parse HEAD)" "${flags[@]}" \
             --title "SuperAwesomeMagical Browser $VERSION" --notes-file "$notes" *
-      - name: Add the Android app to the release
-        if: env.ANDROID_SIGNED == 'true'
-        run: gh workflow run android.yml --ref "$GITHUB_REF_NAME" -f release=true
+
+  promote:
+    name: Make the pre-release the latest
+    needs: version
+    if: needs.version.outputs.promote == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: gh release edit "v${{ needs.version.outputs.version }}" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest

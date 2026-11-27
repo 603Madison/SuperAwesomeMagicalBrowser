@@ -1,18 +1,32 @@
 #!/bin/sh
-# Starts SuperAwesomeMagical Browser: Firefox from this folder, with its own profile (so it never
-# mixes with a separately installed Firefox) and its own window identity (so the desktop shows our
-# name and icon). Arguments are Firefox's: URLs to open, --private-window, --new-window and so on.
+# Starts SuperAwesomeMagical Browser: Ladybird (the official package from Ladybird's own repository,
+# which keeps it up to date) with the SuperAwesomeMagical presets, in a profile of its own so it never
+# mixes with plain Ladybird. Arguments are Ladybird's: URLs to open, --new-window and so on.
 #
-# The packages install this as /usr/bin/superawesomemagicalbrowser with APPDIR set to
-# /usr/lib/superawesomemagicalbrowser; in the tarball it sits beside Firefox.
-APPDIR=$(dirname "$(readlink -f "$0")")
-APP_ID=io.github._603madison.SuperAwesomeMagicalBrowser
+# The presets (desktop/edition/settings.json) are written only when the profile has no settings
+# yet, so anything changed in Ladybird's Settings stays changed.
+# (SAM_SHARE and SAM_LADYBIRD are for desktop/check.py, to try a build before it is installed.)
+SHARE=${SAM_SHARE:-@SHARE@}
+LADYBIRD=${SAM_LADYBIRD:-/opt/ladybird/bin/Ladybird}
+PROFILE=superawesomemagical
 
-data="${XDG_DATA_HOME:-$HOME/.local/share}/superawesomemagicalbrowser"
-mkdir -p "$data/profile"
+if [ ! -x "$LADYBIRD" ]; then
+  echo "SuperAwesomeMagical Browser needs Ladybird (the 'ladybird' package from ladybird.org)." >&2
+  exit 1
+fi
 
-# Make Wayland and X11 report our app ID, which is also the .desktop file's name.
-export MOZ_APP_REMOTINGNAME="$APP_ID"
-# What Settings › Make default registers as the browser: this launcher, not Firefox on its own.
-export MOZ_APP_LAUNCHER="$(readlink -f "$0")"
-exec "$APPDIR/firefox" --name "$APP_ID" --class "$APP_ID" --profile "$data/profile" "$@"
+settings="${XDG_CONFIG_HOME:-$HOME/.config}/Ladybird/Profiles/$PROFILE/Settings.json"
+if [ ! -e "$settings" ]; then
+  mkdir -p "$(dirname "$settings")"
+  # The bookmarks of the Firefox-based SuperAwesomeMagical Browser (2026.11), if there are any.
+  firefox="${XDG_DATA_HOME:-$HOME/.local/share}/superawesomemagicalbrowser/profile"
+  if [ -d "$firefox" ] && command -v python3 > /dev/null; then
+    python3 -I "$SHARE/firefox-bookmarks.py" "$firefox" "$(dirname "$settings")/Bookmarks.json" || true
+  fi
+  sed "s|@SHARE@|$SHARE|g" "$SHARE/settings.json" > "$settings.new" && mv "$settings.new" "$settings"
+fi
+
+# Lexend for the interface and for pages that want a plain sans-serif (desktop/edition/fonts.conf).
+export FONTCONFIG_FILE="$SHARE/fonts.conf"
+
+exec "$LADYBIRD" --profile "$PROFILE" "$@"

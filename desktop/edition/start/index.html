@@ -1,14 +1,11 @@
 <!doctype html>
-<!-- SuperAwesomeMagical Browser's start page: the new tab page and the home page, served as
-     chrome://superawesomemagical/content/index.html (see start.js). In the look of
+<!-- SuperAwesomeMagical Browser's start page: Ladybird's new tab page (see start.js). In the look of
      SuperAwesomeMagicalLinux's sign-in screen: a large Lexend clock and a rounded slate card over
      the northern lights. -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'">
   <meta name="color-scheme" content="dark light">
   <title>New Tab</title>
   <link rel="icon" href="icon.svg">
@@ -17,7 +14,7 @@
 </head>
 <body>
   <main>
-    <header class="clock" aria-live="off">
+    <header class="clock">
       <h1 id="time">&nbsp;</h1>
       <p id="date">&nbsp;</p>
     </header>
@@ -27,10 +24,16 @@
         <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M10.5 3a7.5 7.5 0 0 1 5.93 12.09l4.24 4.24a1 1 0 0 1-1.42 1.42l-4.24-4.24A7.5 7.5 0 1 1 10.5 3Zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Z"/>
         </svg>
-        <input id="query" type="search" spellcheck="false"
-               placeholder="Search or enter address" aria-label="Search or enter address">
+        <input id="query" type="search" spellcheck="false" autofocus
+               placeholder="Search with Ecosia or enter address" aria-label="Search with Ecosia or enter address">
       </form>
-      <ul id="sites" class="sites" aria-label="Top sites"></ul>
+      <ul id="sites" class="sites" aria-label="Shortcuts"></ul>
+      <form id="add" class="add" hidden autocomplete="off">
+        <input id="add-url" type="text" spellcheck="false" placeholder="Address" aria-label="Address">
+        <input id="add-name" type="text" placeholder="Name (optional)" aria-label="Name">
+        <button type="submit" class="primary">Add</button>
+        <button type="button" id="add-cancel">Cancel</button>
+      </form>
     </section>
   </main>
 
@@ -41,11 +44,22 @@
   <template id="site">
     <li class="site">
       <a class="site-link">
-        <span class="tile"><img class="favicon" alt=""><span class="letter"></span></span>
+        <span class="tile"><span class="letter"></span></span>
         <span class="name"></span>
       </a>
-      <button class="remove" type="button" title="Remove from start page" aria-label="Remove">
+      <button class="remove" type="button" title="Remove shortcut" aria-label="Remove shortcut">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.7 5.3 12 10.6l5.3-5.3a1 1 0 1 1 1.4 1.4L13.4 12l5.3 5.3a1 1 0 0 1-1.4 1.4L12 13.4l-5.3 5.3a1 1 0 0 1-1.4-1.4l5.3-5.3-5.3-5.3a1 1 0 0 1 1.4-1.4Z"/></svg>
+      </button>
+    </li>
+  </template>
+
+  <template id="add-site">
+    <li class="site">
+      <button class="site-link add-link" type="button">
+        <span class="tile add-tile">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5a1 1 0 0 1 1 1v5h5a1 1 0 1 1 0 2h-5v5a1 1 0 1 1-2 0v-5H6a1 1 0 1 1 0-2h5V6a1 1 0 0 1 1-1Z"/></svg>
+        </span>
+        <span class="name">Add</span>
       </button>
     </li>
   </template>

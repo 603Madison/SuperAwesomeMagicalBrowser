@@ -133,7 +133,7 @@ def main():
         d = OUT / f"{s}x{s}/apps"
         d.mkdir(parents=True, exist_ok=True)
         png(s).save(d / f"{APP_ID}.png", optimize=True)
-    start = ROOT / "desktop/layer/superawesomemagical/start"
+    start = ROOT / "desktop/edition/start"
     (start / "icon.svg").write_text(svg())
     res = ROOT / "android/app/src/main/res/drawable"
     if res.is_dir():

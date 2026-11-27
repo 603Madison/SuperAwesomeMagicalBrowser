@@ -1,35 +1,107 @@
-# SuperAwesomeMagical Browser for Android: tests and builds the app on every change, and on a
-# release signs the APK and adds it to the release of the same version (made by the Linux
-# workflow, which starts this one after publishing; or Run workflow with "release" ticked).
+# SuperAwesomeMagical Browser for Android. Ladybird has no Android version, so the app is on
+# GeckoView (Firefox's engine for Android), and this workflow keeps it on the newest one:
 #
-# Signing needs the RELEASE_KEYSTORE_BASE64 and RELEASE_KEYSTORE_PASSWORD secrets (the key's alias
-# is "browser"). Every release must be signed with the same key, or installed copies can't update.
+# - Every push and pull request: test and build.
+# - Run workflow with "release" ticked: release the version in android/release.env.
+# - Every six hours: if Mozilla has shipped a newer GeckoView, build, test and release it, and commit
+#   the new version to android/release.env. Firefox's security fixes come this way.
+#
+# Releases are tagged android-v<version> and never marked "latest": the latest release is the Linux
+# one, which SuperAwesomeMagicalLinux's image installs. Signing needs the RELEASE_KEYSTORE_BASE64 and
+# RELEASE_KEYSTORE_PASSWORD secrets (the key's alias is "browser"); every release must be signed
+# with the same key, or installed copies can't update. Without them nothing is released.
 name: Android
 
 on:
   push:
-    paths: ["android/**", "desktop/release.env", ".github/workflows/android.yml"]
+    paths: ["android/**", ".github/workflows/android.yml"]
   pull_request:
-    paths: ["android/**", "desktop/release.env", ".github/workflows/android.yml"]
+    paths: ["android/**", ".github/workflows/android.yml"]
   workflow_dispatch:
     inputs:
       release:
-        description: "Add the signed APK to the release of the version in desktop/release.env"
+        description: "Release the version in android/release.env"
         type: boolean
         default: false
+  schedule:
+    - cron: "41 */6 * * *"
 
 permissions:
   contents: read
 
+concurrency:
+  group: android-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    outputs:
+      firefox: ${{ steps.v.outputs.firefox }}
+      geckoview: ${{ steps.v.outputs.geckoview }}
+      release: ${{ steps.v.outputs.release }}
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
+      publish: ${{ steps.v.outputs.publish }}
+      bumped: ${{ steps.v.outputs.bumped }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          RELEASE_INPUT: ${{ inputs.release }}
+          SIGNED: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        run: |
+          source android/release.env
+          ff=$FIREFOX_VERSION gv=$GECKOVIEW_VERSION rel=$RELEASE build=true publish=false bumped=false
+          if [ "$EVENT" = schedule ]; then
+            if [ "$SIGNED" != true ]; then
+              echo "No signing key yet (RELEASE_KEYSTORE_BASE64), so nothing to release"
+              build=false
+            else
+              latest=$(curl -fsSL --retry 5 https://product-details.mozilla.org/1.0/firefox_versions.json | jq -r .LATEST_FIREFOX_VERSION)
+              newest=$(printf '%s\n%s\n' "$ff" "$latest" | sort -V | tail -1)
+              latest_gv=$(curl -fsSL --retry 5 https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview/maven-metadata.xml |
+                grep -o "<version>$latest\.[0-9]*</version>" | sed 's/<[^>]*>//g' | sort -V | tail -1)
+              if [ "$latest" != "$ff" ] && [ "$newest" = "$latest" ] && [ -n "$latest_gv" ]; then
+                echo "GeckoView $latest_gv is out (we have $gv)"
+                ff=$latest gv=$latest_gv rel=1 publish=true bumped=true
+              else
+                echo "Still on the newest GeckoView ($gv)"
+                build=false
+              fi
+            fi
+          elif [ "$EVENT" = workflow_dispatch ] && [ "$RELEASE_INPUT" = true ]; then
+            publish=true
+          fi
+          if [ "$publish" = true ] && git ls-remote --exit-code --tags origin "refs/tags/android-v$ff-$rel" >/dev/null; then
+            echo "::error::android-v$ff-$rel is already released; raise RELEASE in android/release.env"
+            exit 1
+          fi
+          {
+            echo "firefox=$ff"; echo "geckoview=$gv"; echo "release=$rel"; echo "version=$ff-$rel"
+            echo "build=$build"; echo "publish=$publish"; echo "bumped=$bumped"
+          } | tee -a "$GITHUB_OUTPUT"
+
   build:
     name: Build and test
+    needs: version
+    if: needs.version.outputs.build == 'true'
     runs-on: ubuntu-24.04
+    env:
+      FIREFOX: ${{ needs.version.outputs.firefox }}
+      GECKOVIEW: ${{ needs.version.outputs.geckoview }}
+      RELEASE: ${{ needs.version.outputs.release }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "21" }
       - uses: gradle/actions/setup-gradle@v4
+      - name: The version to build
+        run: |
+          sed -i -e "s/^FIREFOX_VERSION=.*/FIREFOX_VERSION=$FIREFOX/" -e "s/^GECKOVIEW_VERSION=.*/GECKOVIEW_VERSION=$GECKOVIEW/" \
+            -e "s/^RELEASE=.*/RELEASE=$RELEASE/" android/release.env
       - name: Signing key
         env:
           KEYSTORE: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
@@ -47,11 +119,10 @@ jobs:
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease
       - name: Name the APKs
         run: |
-          source desktop/release.env
           mkdir dist
           for abi in arm64-v8a x86_64; do
             apk=$(ls android/app/build/outputs/apk/release/app-$abi-release*.apk | head -1)
-            cp "$apk" "dist/SuperAwesomeMagicalBrowser-$FIREFOX_VERSION-$RELEASE-android-$abi.apk"
+            cp "$apk" "dist/SuperAwesomeMagicalBrowser-$FIREFOX-$RELEASE-android-$abi.apk"
           done
           ls -la dist
       - uses: actions/upload-artifact@v4
@@ -59,28 +130,50 @@ jobs:
           name: apk
           path: dist/*.apk
           compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-screenshots
+          path: android/app/build/outputs/screenshots
 
   release:
-    name: Add to the release
-    needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.release
+    name: Release
+    needs: [version, build]
+    if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
       SIGNED: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+      VERSION: ${{ needs.version.outputs.version }}
+      FIREFOX: ${{ needs.version.outputs.firefox }}
+      GECKOVIEW: ${{ needs.version.outputs.geckoview }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { name: apk, path: dist }
-      - name: Upload
+      - name: Signing key
         run: |
           if [ "$SIGNED" != true ]; then
             echo "::error::Add the RELEASE_KEYSTORE_BASE64 and RELEASE_KEYSTORE_PASSWORD secrets to release the app (see CLAUDE.md)"
             exit 1
           fi
-          source desktop/release.env
-          tag="v$FIREFOX_VERSION-$RELEASE"
-          gh release view "$tag" >/dev/null || { echo "::error::No release $tag yet (the Linux workflow makes it)"; exit 1; }
-          gh release upload "$tag" dist/*.apk --clobber
+      - name: Record the new GeckoView in android/release.env
+        if: needs.version.outputs.bumped == 'true'
+        run: |
+          sed -i -e "s/^FIREFOX_VERSION=.*/FIREFOX_VERSION=$FIREFOX/" -e "s/^GECKOVIEW_VERSION=.*/GECKOVIEW_VERSION=$GECKOVIEW/" \
+            -e "s/^RELEASE=.*/RELEASE=1/" android/release.env
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Android: follow GeckoView $GECKOVIEW"
+          git push
+      - name: Publish
+        run: |
+          cd dist
+          sha256sum *.apk > SHA256SUMS
+          notes=$(mktemp)
+          printf 'SuperAwesomeMagical Browser for Android on GeckoView %s ([Firefox %s release notes](https://www.mozilla.org/firefox/android/%s/releasenotes/)).\n\nInstall the `arm64-v8a` APK on a phone (the `x86_64` one is for the emulator and Chromebooks).\n' \
+            "$GECKOVIEW" "$FIREFOX" "$FIREFOX" > "$notes"
+          gh release create "android-v$VERSION" --target "$(git rev-parse HEAD)" --latest=false \
+            --title "SuperAwesomeMagical Browser for Android $VERSION" --notes-file "$notes" *

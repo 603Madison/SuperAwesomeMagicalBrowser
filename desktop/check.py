@@ -1,36 +1,34 @@
 #!/usr/bin/env python3
-"""Starts SuperAwesomeMagical Browser and checks that everything we add to Firefox works.
+"""Starts SuperAwesomeMagical Browser and checks that everything we add to Ladybird works.
 
-    python3 desktop/check.py                      the browser built by desktop/build.sh
-    python3 desktop/check.py /usr/bin/superawesomemagicalbrowser     an installed package
+    python3 desktop/check.py                      the installed browser (the .deb or .rpm)
     python3 desktop/check.py --screenshots DIR    ... and save screenshots (light and dark)
 
-It runs the real launcher with a new, throwaway profile (and its own Xvfb display if there is
-none), drives the browser over Marionette, and fails if any check fails. CI runs it on the
-tarball and on the installed .deb and .rpm.
+It runs the real launcher in a throwaway home (and its own Xvfb display if there is none), so the
+presets are written as on a first start, with an old Firefox-based profile there to carry the
+bookmarks over from. Then it drives the browser through Ladybird's own WebDriver, in the same
+profile, and fails if any check fails. CI runs it on the packages installed in Ubuntu and Fedora,
+with Ladybird from Ladybird's repositories.
 """
 import argparse
 import http.server
+import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from marionette import Marionette  # noqa: E402
-
-HERE = Path(__file__).resolve().parent
-START_URL = "chrome://superawesomemagical/content/index.html"
-APP_NAME = "SuperAwesomeMagical Browser"
-PAGES = {
-    "/aurora.html": "Aurora forecast",
-    "/recipes.html": "Recipes — Weeknight pasta",
-    "/trail.html": "Trail map: Upper Geyser Basin",
-}
+LAUNCHER = "/usr/bin/superawesomemagicalbrowser"
+SHARE = "/usr/share/superawesomemagicalbrowser"
+LADYBIRD = "/opt/ladybird/bin/Ladybird"
+PROFILE = "superawesomemagical"
+START = f"file://{SHARE}/start/index.html"
 
 failures = []
 
@@ -41,17 +39,14 @@ def check(name, ok, detail=""):
         failures.append(name)
 
 
-def serve_pages():
+# ---- A page to visit, served here ----
+
+def serve_page():
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            title = PAGES.get(self.path)
-            if not title:
-                self.send_error(404)
-                return
-            body = (f"<!doctype html><meta charset=utf-8><title>{title}</title>"
-                    f"<body style='margin:40px'><h1>{title}</h1><p>Text in the browser's default "
-                    "font.</p><p><a href='#'>A link</a> <button>A button</button> "
-                    "<input placeholder='An input'></p>").encode()
+            body = (b"<!doctype html><meta charset=utf-8><title>Recipes - Weeknight pasta</title>"
+                    b"<body style='margin:40px'><h1>Weeknight pasta</h1><p>Text in the browser's default "
+                    b"font.</p><p><a href='#'>A link</a> <button>A button</button> <input></p>")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
@@ -62,7 +57,65 @@ def serve_pages():
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    return f"http://127.0.0.1:{server.server_address[1]}"
+    return f"http://127.0.0.1:{server.server_address[1]}/recipes.html"
+
+
+# ---- An old Firefox-based profile, with a bookmark in its toolbar and one in its menu ----
+
+def old_firefox_profile(home: Path):
+    profile = home / ".local/share/superawesomemagicalbrowser/profile"
+    profile.mkdir(parents=True)
+    db = sqlite3.connect(profile / "places.sqlite")
+    db.executescript("""
+        CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT);
+        CREATE TABLE moz_bookmarks (id INTEGER PRIMARY KEY, type INTEGER, fk INTEGER, parent INTEGER,
+            position INTEGER, title TEXT, dateAdded INTEGER, lastModified INTEGER, guid TEXT);
+        INSERT INTO moz_places VALUES (1, 'https://music.example.org/'), (2, 'https://weather.example.org/');
+        INSERT INTO moz_bookmarks VALUES
+            (1, 2, NULL, 0, 0, '', 0, 0, 'root________'),
+            (2, 2, NULL, 1, 0, 'menu', 0, 0, 'menu________'),
+            (3, 2, NULL, 1, 1, 'toolbar', 0, 0, 'toolbar_____'),
+            (4, 1, 1, 3, 0, 'Music', 1700000000000000, 1700000000000000, 'aaaaaaaaaaaa'),
+            (5, 1, 2, 2, 0, 'Weather', 1700000000000000, 1700000000000000, 'bbbbbbbbbbbb');
+    """)
+    db.commit()
+    db.close()
+
+
+# ---- Ladybird's WebDriver (W3C WebDriver over HTTP) ----
+
+class WebDriver:
+    def __init__(self, port):
+        self.base = f"http://127.0.0.1:{port}"
+        for _ in range(100):
+            try:
+                self.session = self.call("POST", "/session", {"capabilities": {}})["sessionId"]
+                return
+            except OSError:
+                time.sleep(0.5)
+        raise RuntimeError("WebDriver did not answer")
+
+    def call(self, method, path, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        request = urllib.request.Request(self.base + path, data=data, method=method,
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return json.loads(response.read() or b"{}").get("value", {})
+
+    def go(self, url):
+        self.call("POST", f"/session/{self.session}/url", {"url": url})
+
+    def url(self):
+        return self.call("GET", f"/session/{self.session}/url")
+
+    def js(self, script, *args):
+        return self.call("POST", f"/session/{self.session}/execute/sync", {"script": script, "args": list(args)})
+
+    def quit(self):
+        try:
+            self.call("DELETE", f"/session/{self.session}")
+        except Exception:
+            pass
 
 
 def start_display():
@@ -80,38 +133,60 @@ def start_display():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("launcher", nargs="?",
-                        default=str(HERE / "out/superawesomemagicalbrowser/superawesomemagicalbrowser"))
     parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
 
     xvfb = start_display()
-    base = serve_pages()
-    data = Path(tempfile.mkdtemp(prefix="samb-check-"))
-    # A throwaway home too: Firefox won't start as root in a home owned by someone else, which is
-    # how CI's containers run (HOME is the runner's).
-    env = dict(os.environ, HOME=str(data), XDG_DATA_HOME=str(data / "share"), MOZ_REMOTE_ALLOW_SYSTEM_ACCESS="1",
-               MOZ_CRASHREPORTER_DISABLE="1")
-    print(f"Starting {args.launcher}")
-    log = open(data / "browser.log", "w")
-    browser = subprocess.Popen([args.launcher, "--marionette"], env=env, stdout=log, stderr=log)
-    m = None
+    page = serve_page()
+    # A short path: Ladybird's sockets live in XDG_RUNTIME_DIR, and socket paths are short.
+    home = Path(tempfile.mkdtemp(prefix="samb-"))
+    runtime = home / "run"
+    runtime.mkdir(mode=0o700)
+    env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(runtime), LANG="C.UTF-8")
+    for key in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
+        env.pop(key, None)
+    old_firefox_profile(home)
+    profile = home / ".config/Ladybird/Profiles" / PROFILE
+
     try:
-        m = Marionette()
-        run_checks(m, base, args.screenshots)
-    except Exception as e:
-        check("the browser starts and answers", False, str(e))
-        print((data / "browser.log").read_text()[-4000:])
-    finally:
-        if m:
-            m.quit()
+        print("First start")
+        version = subprocess.run([LAUNCHER, "--version"], env=dict(env, QT_QPA_PLATFORM="offscreen"),
+                                 capture_output=True, text=True, timeout=60)
+        check("the launcher starts Ladybird", version.stdout.startswith("Version "), version.stdout + version.stderr[-300:])
+        check("bookmarks are brought over quietly", "bookmarks" in version.stderr and "bookmarks" not in version.stdout)
+        check_presets(profile / "Settings.json", "written")
+        check_bookmarks(profile / "Bookmarks.json")
+
+        print("Browsing")
+        # WebDriver starts Ladybird in the same profile, with the launcher's fonts.
+        driver_env = dict(env, FONTCONFIG_FILE=f"{SHARE}/fonts.conf")
+        port = 4444 + os.getpid() % 1000
+        log = open(home / "webdriver.log", "w")
+        webdriver = subprocess.Popen([str(Path(LADYBIRD).with_name("WebDriver")), "--port", str(port),
+                                      "--profile", PROFILE, "--force-cpu-painting"],
+                                     env=driver_env, stdout=log, stderr=log)
+        driver = None
         try:
-            browser.wait(20)
-        except subprocess.TimeoutExpired:
-            browser.kill()
+            driver = WebDriver(port)
+            browse(driver, page, args.screenshots)
+        except Exception as e:
+            check("WebDriver drives the browser", False, repr(e))
+            print((home / "webdriver.log").read_text()[-3000:])
+        finally:
+            if driver:
+                driver.quit()
+            webdriver.terminate()
+            try:
+                webdriver.wait(20)
+            except subprocess.TimeoutExpired:
+                webdriver.kill()
+
+        print("After browsing")
+        check_presets(profile / "Settings.json", "kept by Ladybird")
+    finally:
         if xvfb:
             xvfb.terminate()
-        shutil.rmtree(data, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
 
     if failures:
         print(f"\n{len(failures)} check(s) failed: " + "; ".join(failures))
@@ -119,129 +194,77 @@ def main():
     print("\nAll checks passed.")
 
 
-def run_checks(m, base, shots):
-    # Give the first window time to finish starting (delayed startup, the start page).
-    m.js("""
-        for (let i = 0; i < 100; i++) {
-          if (window.gBrowserInit?.delayedStartupFinished &&
-              gBrowser.selectedBrowser.contentDocument?.getElementById("sites")?.children.length) return;
-          await new Promise(r => setTimeout(r, 200));
-        }""")
+def check_presets(path, how):
+    # Ladybird rewrites the file in its own words when it saves settings, so after browsing this also
+    # shows that it understood every preset (one it didn't would come back as its default).
+    try:
+        settings = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        check(f"presets {how}", False, repr(e))
+        return
+    tabs = settings.get("tabs", {})
+    check(f"tabs down the left ({how})", tabs.get("verticalTabsEnabled") is True and tabs.get("verticalTabsPosition") == "left", tabs)
+    check(f"Ecosia searches ({how})", settings.get("searchEngine", {}).get("engine") == "Ecosia", settings.get("searchEngine"))
+    check(f"the Lavender colour ({how})", settings.get("appearance", {}).get("colorTheme") == "lavender", settings.get("appearance"))
+    check(f"the start page for new tabs ({how})", settings.get("newTabPageURL") == START, settings.get("newTabPageURL"))
+    check(f"ads and trackers blocked ({how})", settings.get("contentBlockers", {}).get("enabled") is True)
+    check(f"no welcome page ({how})", settings.get("firstRunComplete") is True)
 
-    print("Preferences")
-    prefs = m.js("""
-        const get = n => { const t = Services.prefs.getPrefType(n);
-          return t == 128 ? Services.prefs.getBoolPref(n) : t == 64 ? Services.prefs.getIntPref(n)
-               : t == 32 ? Services.prefs.getStringPref(n) : null; };
-        return Object.fromEntries(["sidebar.revamp", "sidebar.verticalTabs", "sidebar.position_start",
-          "font.name.sans-serif.x-western", "font.default.x-western", "browser.startup.homepage",
-          "general.config.filename"].map(n => [n, get(n)]));""")
-    check("tabs down the left (sidebar.verticalTabs)", prefs["sidebar.verticalTabs"] is True and prefs["sidebar.position_start"] is True, prefs)
-    check("Lexend is the default font for pages", prefs["font.name.sans-serif.x-western"] == "Lexend" and prefs["font.default.x-western"] == "sans-serif", prefs)
-    check("the start page is the home page", prefs["browser.startup.homepage"] == START_URL, prefs["browser.startup.homepage"])
 
-    print("Window")
-    win = m.js("""
-        const root = getComputedStyle(document.documentElement);
-        const tabs = document.getElementById("tabbrowser-tabs");
-        const fonts = Cc["@mozilla.org/gfx/fontenumerator;1"].getService(Ci.nsIFontEnumerator).EnumerateAllFonts();
-        return {
-          samBg: root.getPropertyValue("--sam-bg").trim(),
-          font: root.fontFamily,
-          urlbarFont: getComputedStyle(document.getElementById("urlbar-input") ?? document.documentElement).fontFamily,
-          orient: tabs.getAttribute("orient"),
-          tabsX: Math.round(tabs.getBoundingClientRect().x),
-          tabsW: Math.round(tabs.getBoundingClientRect().width),
-          cardRadius: getComputedStyle(document.getElementById("tabbrowser-tabbox")).borderTopRightRadius,
-          lexend: fonts.includes("Lexend"),
-          nav: CustomizableUI.getWidgetIdsInArea("nav-bar").slice(0, 4),
-          newTab: BROWSER_NEW_TAB_URL,
-        };""")
-    check("the theme is loaded (theme.css)", win["samBg"] in ("#0b1220", "#f5f7fb"), win["samBg"])
-    check("the interface is in Lexend", "Lexend" in win["font"] and "Lexend" in win["urlbarFont"], win["font"])
-    check("Lexend is installed with the browser", win["lexend"])
-    check("tabs are vertical, on the left", win["orient"] == "vertical" and win["tabsX"] < 20 and win["tabsW"] > 100, win)
-    check("the page is a rounded card (browser.css)", win["cardRadius"] == "16px", win["cardRadius"])
-    check("toolbar starts with sidebar, back, forward, reload",
-          win["nav"] == ["sidebar-button", "back-button", "forward-button", "stop-reload-button"], win["nav"])
-    check("the start page is the new tab page", win["newTab"] == START_URL, win["newTab"])
+def check_bookmarks(path):
+    try:
+        items = json.loads(path.read_text())["items"]
+    except (OSError, ValueError, KeyError) as e:
+        check("bookmarks brought over from Firefox", False, repr(e))
+        return
+    top = [i.get("title") for i in items]
+    menu = next((i for i in items if i.get("type") == "folder" and i.get("title") == "Bookmarks Menu"), {})
+    check("bookmarks brought over from Firefox",
+          "Music" in top and [c.get("title") for c in menu.get("children", [])] == ["Weather"], items)
 
-    print("Start page")
-    start = m.js("""
-        const b = gBrowser.selectedBrowser, doc = b.contentDocument;
-        return { url: b.currentURI.spec, time: doc?.getElementById("time")?.textContent,
-                 placeholder: doc?.getElementById("query")?.placeholder,
-                 sites: doc?.querySelectorAll("#sites .site").length ?? 0,
-                 font: doc && doc.defaultView.getComputedStyle(doc.body).fontFamily };""")
-    check("opens at startup", start["url"] == START_URL, start["url"])
-    check("shows the clock", bool((start["time"] or "").strip()), start["time"])
-    check("searches with Ecosia", "Ecosia" in (start["placeholder"] or ""), start["placeholder"])
-    check("shows top sites", start["sites"] >= 4, start["sites"])
-    check("is in Lexend", "Lexend" in (start["font"] or ""), start["font"])
-    engine = m.js("""
-        const { SearchService } = ChromeUtils.importESModule("moz-src:///toolkit/components/search/SearchService.sys.mjs");
-        await SearchService.init();
-        return (await SearchService.getDefault()).name;""")
-    check("Ecosia is the default search engine", engine == "Ecosia", engine)
 
-    newtab = m.js("""
-        BrowserCommands.openTab();
-        await new Promise(r => setTimeout(r, 1500));
-        return { url: gBrowser.selectedBrowser.currentURI.spec, urlbar: gURLBar.value };""")
-    check("a new tab opens the start page, address bar empty",
-          newtab["url"] == START_URL and newtab["urlbar"] == "", newtab)
+def browse(driver, page, shots):
+    driver.go(START)
+    start = driver.js("""
+        const width = font => { const c = document.createElement("canvas").getContext("2d");
+                                c.font = "40px " + font; return c.measureText("Wonderful aurora 0123").width; };
+        return { time: document.getElementById("time").textContent.trim(),
+                 placeholder: document.getElementById("query").placeholder,
+                 tiles: document.querySelectorAll("#sites .site-link").length,
+                 // Lexend measures differently from monospace; "serif" and "sans-serif" are Lexend.
+                 lexend: width("Lexend") !== width("monospace"),
+                 serif: width("serif") === width("Lexend"),
+                 sans: width("sans-serif") === width("Lexend"),
+                 editable: document.documentElement.hasAttribute("data-editable") };""")
+    check("the start page shows the clock", bool(start.get("time")), start)
+    check("the start page searches with Ecosia", "Ecosia" in start.get("placeholder", ""), start)
+    check("the start page shows shortcuts", start.get("tiles", 0) >= 5, start)
+    check("shortcuts can be added and removed", start.get("editable") is True, start)
+    check("Lexend is there", start.get("lexend") is True, start)
+    check("pages that name no font get Lexend", start.get("serif") is True and start.get("sans") is True, start)
 
-    searched = m.js("""
-        const b = gBrowser.selectedBrowser, doc = b.contentDocument;
-        doc.getElementById("query").value = "northern lights";
-        doc.getElementById("search").requestSubmit();
-        for (let i = 0; i < 50 && b.currentURI.spec.startsWith("chrome:"); i++) await new Promise(r => setTimeout(r, 200));
-        return b.currentURI.spec;""")
-    check("its search box searches", searched.startswith("https://www.ecosia.org/search?q=northern"), searched)
+    driver.js("""const q = document.getElementById("query"); q.value = "northern lights";
+                 document.getElementById("search").requestSubmit();""")
+    for _ in range(40):
+        url = driver.url()
+        if not url.startswith("file:"):
+            break
+        time.sleep(0.25)
+    check("its search box searches Ecosia", url.startswith("https://www.ecosia.org/search?q=northern"), url)
 
-    print("Pages")
-    page = m.js(f"""
-        for (const p of {list(PAGES)!r}) gBrowser.addTrustedTab("{base}" + p);
-        gBrowser.selectedTab = gBrowser.tabs.at(-2);
-        await new Promise(r => setTimeout(r, 2500));
-        return {{ title: document.title }};""")
-    check("window titles end in our name", page["title"].endswith("— " + APP_NAME), page["title"])
-
-    settings = m.js("""
-        const tab = gBrowser.addTrustedTab("about:preferences");
-        gBrowser.selectedTab = tab;
-        await new Promise(r => setTimeout(r, 2500));
-        const doc = tab.linkedBrowser.contentDocument, s = doc.defaultView.getComputedStyle(doc.body);
-        const root = doc.defaultView.getComputedStyle(doc.documentElement);
-        return { bg: s.backgroundColor, font: s.fontFamily, accent: root.getPropertyValue("--color-accent-primary").trim() };""")
-    check("Settings has our colours and Lexend",
-          settings["bg"] in ("rgb(11, 18, 32)", "rgb(245, 247, 251)") and "Lexend" in settings["font"], settings)
-
-    errors = m.js("""
-        return (Services.console.getMessageArray() || [])
-          .filter(e => e instanceof Ci.nsIScriptError && !(e.flags & Ci.nsIScriptError.warningFlag))
-          .map(e => `${e.errorMessage} (${e.sourceName}:${e.lineNumber})`)
-          .filter(t => /superawesomemagical/i.test(t));""")
-    check("no errors from our files", not errors, "; ".join(errors)[:600])
+    driver.go(page)
+    title = driver.js("return document.title")
+    check("a page opens", title == "Recipes - Weeknight pasta", title)
 
     if shots:
         shots.mkdir(parents=True, exist_ok=True)
+        driver.go(START)
+        time.sleep(2)
+        subprocess.run(["import", "-window", "root", str(shots / "start.png")], check=False)
+        driver.go(page)
+        time.sleep(2)
+        subprocess.run(["import", "-window", "root", str(shots / "page.png")], check=False)
         print(f"Screenshots in {shots}")
-        # Marionette's "remote control" stripes in the address bar aren't part of the browser.
-        m.js("""const css = "data:text/css," + encodeURIComponent(
-                  ".urlbar-background{background-image:none!important} #remote-control-box{display:none!important}");
-                window.windowUtils.loadSheetUsingURIString(css, window.windowUtils.AUTHOR_SHEET);""")
-        for scheme, dark in (("light", 0), ("dark", 1)):
-            m.js(f"""Services.prefs.setIntPref("ui.systemUsesDarkTheme", {dark});
-                     gBrowser.selectedTab = gBrowser.tabs[0];
-                     await new Promise(r => setTimeout(r, 1200));""")
-            m.screenshot(str(shots / f"start-{scheme}.png"))
-            m.js("""gBrowser.selectedTab = gBrowser.tabs.find(t => t.linkedBrowser.currentURI.spec.endsWith("recipes.html"));
-                    await new Promise(r => setTimeout(r, 900));""")
-            m.screenshot(str(shots / f"page-{scheme}.png"))
-            m.js("""gBrowser.selectedTab = gBrowser.tabs.at(-1);
-                    await new Promise(r => setTimeout(r, 900));""")
-            m.screenshot(str(shots / f"settings-{scheme}.png"))
 
 
 if __name__ == "__main__":

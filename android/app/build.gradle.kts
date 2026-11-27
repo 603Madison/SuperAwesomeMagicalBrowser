@@ -5,9 +5,9 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// One version for the whole project: desktop/release.env (Firefox's version and our release).
+// The app's version, and GeckoView's: android/release.env (the Android workflow follows GeckoView).
 val release = Properties().apply {
-    rootProject.file("../desktop/release.env").readLines()
+    rootProject.file("release.env").readLines()
         .map { it.trim() }
         .filter { it.isNotEmpty() && !it.startsWith("#") && "=" in it }
         .forEach { setProperty(it.substringBefore("="), it.substringAfter("=")) }

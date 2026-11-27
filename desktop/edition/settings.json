@@ -1,0 +1,33 @@
+{
+  "firstRunComplete": true,
+  "newTabPageURL": "file://@SHARE@/start/index.html",
+  "restorePreviousSession": false,
+  "appearance": {
+    "showMenuBar": false,
+    "showBookmarksBar": "never",
+    "interfaceTheme": "system",
+    "websiteColorScheme": "system",
+    "colorTheme": "lavender"
+  },
+  "tabs": {
+    "verticalTabsEnabled": true,
+    "verticalTabsExpanded": true,
+    "verticalTabsExpandOnHover": false,
+    "verticalTabsPosition": "left",
+    "everythingInSidebar": false
+  },
+  "searchEngine": {
+    "engine": "Ecosia",
+    "suggestions": true
+  },
+  "globalPrivacyControl": true,
+  "contentBlockers": {
+    "enabled": true
+  },
+  "backgroundNetworking": {
+    "enabled": true,
+    "features": {
+      "contentBlockerSubscriptionUpdates": true
+    }
+  }
+}

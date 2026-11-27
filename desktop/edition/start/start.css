@@ -1,6 +1,7 @@
-/* SuperAwesomeMagical Browser's start page, in the look of SuperAwesomeMagicalLinux's sign-in
-   screen: a large Lexend clock and a rounded slate card. Dark: over the northern lights photo.
-   Light: over soft purple and green glows, like the light orbs wallpaper. */
+/* SuperAwesomeMagical Browser's start page (Ladybird's new tab page), in the look of
+   SuperAwesomeMagicalLinux's sign-in screen: a large Lexend clock and a rounded slate card. Dark:
+   over the northern lights photo. Light: over soft purple and green glows, like the light orbs
+   wallpaper. */
 
 :root {
   color-scheme: dark;
@@ -14,6 +15,7 @@
   --tile: rgb(34 48 71 / 0.85);
   --tile-hover: rgb(46 62 90 / 0.95);
   --primary: #cfbdff;
+  --on-primary: #341a86;
   --primary-container: #4b33a8;
   --on-primary-container: #e9ddff;
   --secondary-container: #005233;
@@ -39,6 +41,7 @@
     --tile: #eef2f8;
     --tile-hover: #e4e9f2;
     --primary: #5b3fd1;
+    --on-primary: #ffffff;
     --primary-container: #e9ddff;
     --on-primary-container: #1d0060;
     --secondary-container: #ddece3;
@@ -189,11 +192,43 @@ main {
   transition: background-color 120ms, transform 120ms;
 }
 .site-link:hover .tile { background: var(--tile-hover); transform: translateY(-1px); }
-.favicon { width: 28px; height: 28px; border-radius: 6px; }
 .letter { font-size: 22px; font-weight: 600; }
 .tile[data-tint="primary"] { background: var(--primary-container); color: var(--on-primary-container); }
 .tile[data-tint="secondary"] { background: var(--secondary-container); color: var(--on-secondary-container); }
 .tile[data-tint="tertiary"] { background: var(--tertiary-container); color: var(--on-tertiary-container); }
+
+/* The "Add" tile, and the little form it opens. */
+.add-link { border: 0; background: none; font: inherit; cursor: pointer; width: 100%; }
+.add-tile { background: transparent; border: 1.5px dashed var(--card-outline); }
+.add-tile svg { width: 24px; height: 24px; fill: var(--muted); }
+
+.add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.add[hidden] { display: none; }
+.add input {
+  flex: 1 1 160px;
+  height: 42px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid var(--field-outline);
+  background: var(--field);
+  outline: none;
+}
+.add input:focus { border-color: var(--primary); }
+.add button {
+  height: 42px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px solid var(--field-outline);
+  background: var(--field);
+  font-weight: 500;
+  cursor: pointer;
+}
+.add button.primary { background: var(--primary); color: var(--on-primary); border-color: transparent; }
 
 .name {
   max-width: 100%;
@@ -223,7 +258,7 @@ main {
 }
 .remove svg { width: 14px; height: 14px; fill: var(--muted); }
 .site:hover .remove, .remove:focus-visible { opacity: 1; }
-:root:not([data-browser]) .remove { display: none; }
+:root:not([data-editable]) .remove { display: none; }
 
 /* ---- Footer chip, as on the sign-in screen ---- */
 
