@@ -1,17 +1,16 @@
 #!/bin/sh
-# Starts SuperAwesomeMagical Browser: Ladybird (the official package from Ladybird's own repository,
-# which keeps it up to date) with the SuperAwesomeMagical presets, in a profile of its own so it never
-# mixes with plain Ladybird. Arguments are Ladybird's: URLs to open, --new-window and so on.
+# Starts SuperAwesomeMagical Browser: our build of Ladybird (with Bitwarden in the toolbar) with the
+# SuperAwesomeMagical presets, in a profile of its own so it never mixes with plain Ladybird. Arguments are Ladybird's: URLs to open, --new-window and so on.
 #
 # The presets (desktop/edition/settings.json) are written only when the profile has no settings
 # yet, so anything changed in Ladybird's Settings stays changed.
 # (SAM_SHARE and SAM_LADYBIRD are for desktop/check.py, to try a build before it is installed.)
 SHARE=${SAM_SHARE:-@SHARE@}
-LADYBIRD=${SAM_LADYBIRD:-/opt/ladybird/bin/Ladybird}
+LADYBIRD=${SAM_LADYBIRD:-/usr/lib/superawesomemagicalbrowser/ladybird/bin/Ladybird}
 PROFILE=superawesomemagical
 
 if [ ! -x "$LADYBIRD" ]; then
-  echo "SuperAwesomeMagical Browser needs Ladybird (the 'ladybird' package from ladybird.org)." >&2
+  echo "SuperAwesomeMagical Browser's Ladybird is missing ($LADYBIRD): reinstall the package." >&2
   exit 1
 fi
 

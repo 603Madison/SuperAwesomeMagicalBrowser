@@ -3,12 +3,23 @@
 #
 # A first build compiles everything Ladybird depends on (Skia, FFmpeg, ICU... and Qt for Ubuntu) and takes hours on
 # GitHub's 4-core machines. What it compiled is cached (vcpkg's packages and ccache's objects), so the next builds
-# take far less; a build that runs out of time still saves its cache, and running again carries on from there.
+# take far less; a build that runs out of time still saves its cache, and running again carries on from there. A
+# build of the same Ladybird with the same patches is kept too, and used again as it is.
 name: Ladybird
 
 on:
   workflow_call:
+    inputs:
+      ladybird:
+        description: "Ladybird release to build (default: LADYBIRD_VERSION in desktop/release.env)"
+        type: string
+        default: ""
   workflow_dispatch:
+    inputs:
+      ladybird:
+        description: "Ladybird release to build (default: LADYBIRD_VERSION in desktop/release.env)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -27,32 +38,48 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: The Ladybird release we build
+        id: v
+        env:
+          WANTED: ${{ inputs.ladybird }}
+        run: |
+          if [ -n "$WANTED" ]; then
+            sed -i "s/^LADYBIRD_VERSION=.*/LADYBIRD_VERSION=$WANTED/" desktop/release.env
+          fi
+          source desktop/release.env
+          echo "ladybird=$LADYBIRD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building Ladybird $LADYBIRD_VERSION"
+          # The patches and the build script decide what's built; the compile caches only say whose they are.
+          echo "built=ladybird-built-${{ matrix.system }}-$LADYBIRD_VERSION-${{ hashFiles('desktop/ladybird/**') }}" >> "$GITHUB_OUTPUT"
+          echo "key=ladybird-${{ matrix.system }}-$LADYBIRD_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: A build of the same Ladybird and patches
+        id: built
+        uses: actions/cache/restore@v4
+        with:
+          path: out
+          key: ${{ steps.v.outputs.built }}
+
       - name: Make room on the runner
+        if: steps.built.outputs.cache-hit != 'true'
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
             /usr/share/swift /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
           sudo docker image prune --all --force > /dev/null || true
           df -h /
 
-      - name: The Ladybird release we build
-        id: v
-        run: |
-          source desktop/release.env
-          echo "ladybird=$LADYBIRD_VERSION" >> "$GITHUB_OUTPUT"
-          # Patches and the build script change what's compiled, but ccache sorts that out: the key only says whose cache.
-          echo "key=ladybird-${{ matrix.system }}-$LADYBIRD_VERSION-${{ hashFiles('desktop/ladybird/**') }}" >> "$GITHUB_OUTPUT"
-
       - name: Restore the build cache
+        if: steps.built.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/cache
           key: ${{ steps.v.outputs.key }}-${{ github.run_id }}
           restore-keys: |
             ${{ steps.v.outputs.key }}-
-            ladybird-${{ matrix.system }}-${{ steps.v.outputs.ladybird }}-
             ladybird-${{ matrix.system }}-
 
       - name: Build
+        if: steps.built.outputs.cache-hit != 'true'
         timeout-minutes: 325
         run: |
           mkdir -p "$RUNNER_TEMP/cache" out
@@ -60,11 +87,18 @@ jobs:
             "${{ matrix.image }}" /w/desktop/ladybird/build-ladybird.sh /out /cache
 
       - name: Save the build cache
-        if: always()
+        if: always() && steps.built.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/cache
           key: ${{ steps.v.outputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Keep the build for next time
+        if: steps.built.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out
+          key: ${{ steps.v.outputs.built }}
 
       - uses: actions/upload-artifact@v4
         with:

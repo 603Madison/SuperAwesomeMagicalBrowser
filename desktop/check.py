@@ -7,10 +7,12 @@
 It runs the real launcher in a throwaway home (and its own Xvfb display if there is none), so the
 presets are written as on a first start, with an old Firefox-based profile there to carry the
 bookmarks over from. Then it drives the browser through Ladybird's own WebDriver, in the same
-profile, and fails if any check fails. CI runs it on the packages installed in Ubuntu and Fedora,
-with Ladybird from Ladybird's repositories.
+profile, and fails if any check fails. Bitwarden is a stand-in that answers as Bitwarden's
+command-line client does; the keys that open it (Ctrl+Shift+L, then the master password) are
+pressed through X, as a person would. CI runs it on the packages installed in Ubuntu and Fedora.
 """
 import argparse
+import ctypes
 import http.server
 import json
 import os
@@ -26,7 +28,7 @@ from pathlib import Path
 
 LAUNCHER = "/usr/bin/superawesomemagicalbrowser"
 SHARE = "/usr/share/superawesomemagicalbrowser"
-LADYBIRD = "/opt/ladybird/bin/Ladybird"
+LADYBIRD = "/usr/lib/superawesomemagicalbrowser/ladybird/bin/Ladybird"
 PROFILE = "superawesomemagical"
 START = f"file://{SHARE}/start/index.html"
 
@@ -44,6 +46,15 @@ def check(name, ok, detail=""):
 def serve_page():
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            if self.path == "/login.html":
+                body = (b"<!doctype html><meta charset=utf-8><title>Aurora forum - Sign in</title><body style='margin:40px'>"
+                        b"<h1>Sign in</h1><form><p><input id=user name=user autocomplete=username></p>"
+                        b"<p><input id=pass name=pass type=password></p><button>Sign in</button></form>")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             body = (b"<!doctype html><meta charset=utf-8><title>Recipes - Weeknight pasta</title>"
                     b"<body style='margin:40px'><h1>Weeknight pasta</h1><p>Text in the browser's default "
                     b"font.</p><p><a href='#'>A link</a> <button>A button</button> <input></p>")
@@ -80,6 +91,76 @@ def old_firefox_profile(home: Path):
     """)
     db.commit()
     db.close()
+
+
+# ---- Bitwarden: a stand-in for its command-line client, with one login for the test page ----
+
+MASTER_PASSWORD = "aurora2026"
+LOGIN = {"username": "aurora", "password": "p@ss \"w0rd\" </script> ✨"}
+
+FAKE_BW = r"""#!/usr/bin/env python3
+import json, os, sys
+args = [a for a in sys.argv[1:] if a != "--nointeraction"]
+with open(os.environ["SAMB_FAKE_BW_LOG"], "a") as log:
+    log.write(json.dumps({"args": args, "nointeraction": "--nointeraction" in sys.argv[1:],
+                          "appdata": os.environ.get("BITWARDENCLI_APPDATA_DIR", "")}) + "\n")
+session = os.environ.get("BW_SESSION")
+if args == ["status"]:
+    print(json.dumps({"serverUrl": "https://vault.example.org", "userEmail": "aurora@example.org",
+                      "status": "unlocked" if session == "test-session" else "locked"}))
+elif args[:1] == ["unlock"]:
+    if os.environ.get("SAMB_BW_PASSWORD") != %(master)r:
+        sys.exit("Invalid master password.")
+    print("test-session")
+elif args[:2] == ["list", "items"]:
+    if session != "test-session":
+        sys.exit("Vault is locked.")
+    url = args[args.index("--url") + 1]
+    items = [{"type": 1, "id": "1", "name": "Aurora forum", "login": dict(%(login)r, totp=None)}] if url.startswith(%(origin)r) else []
+    print(json.dumps(items))
+elif args in (["sync"], ["lock"]):
+    pass
+else:
+    sys.exit("unexpected: " + " ".join(args))
+"""
+
+
+class XInput:
+    """Presses keys and clicks on the X display, through the XTEST extension, as a person would."""
+
+    def __init__(self):
+        self.x11 = ctypes.CDLL("libX11.so.6")
+        self.xtest = ctypes.CDLL("libXtst.so.6")
+        self.x11.XOpenDisplay.restype = ctypes.c_void_p
+        self.x11.XStringToKeysym.restype = ctypes.c_ulong
+        self.x11.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        self.display = ctypes.c_void_p(self.x11.XOpenDisplay(None))
+        if not self.display:
+            raise RuntimeError("can't open the X display")
+
+    def _flush(self, pause=0.05):
+        self.x11.XFlush(self.display)
+        time.sleep(pause)
+
+    def keys(self, *names):
+        codes = [self.x11.XKeysymToKeycode(self.display, self.x11.XStringToKeysym(n.encode())) for n in names]
+        for code in codes:
+            self.xtest.XTestFakeKeyEvent(self.display, code, True, 0)
+            self._flush()
+        for code in reversed(codes):
+            self.xtest.XTestFakeKeyEvent(self.display, code, False, 0)
+            self._flush()
+
+    def type(self, text):
+        for ch in text:
+            self.keys(ch)
+
+    def click(self, x, y):
+        self.xtest.XTestFakeMotionEvent(self.display, -1, x, y, 0)
+        self._flush(0.2)
+        self.xtest.XTestFakeButtonEvent(self.display, 1, True, 0)
+        self.xtest.XTestFakeButtonEvent(self.display, 1, False, 0)
+        self._flush(0.3)
 
 
 # ---- Ladybird's WebDriver (W3C WebDriver over HTTP) ----
@@ -158,8 +239,14 @@ def main():
         check_bookmarks(profile / "Bookmarks.json")
 
         print("Browsing")
-        # WebDriver starts Ladybird in the same profile, with the launcher's fonts.
-        driver_env = dict(env, FONTCONFIG_FILE=f"{SHARE}/fonts.conf")
+        # WebDriver starts Ladybird in the same profile, with the launcher's fonts, and the stand-in for Bitwarden.
+        fake_bw = home / "bw"
+        origin = page.rsplit("/", 1)[0]
+        fake_bw.write_text(FAKE_BW % {"master": MASTER_PASSWORD, "login": LOGIN, "origin": origin})
+        fake_bw.chmod(0o755)
+        bw_log = home / "bw.log"
+        driver_env = dict(env, FONTCONFIG_FILE=f"{SHARE}/fonts.conf", SAMB_BITWARDEN_CLI=str(fake_bw),
+                          SAMB_FAKE_BW_LOG=str(bw_log))
         port = 4444 + os.getpid() % 1000
         log = open(home / "webdriver.log", "w")
         webdriver = subprocess.Popen([str(Path(LADYBIRD).with_name("WebDriver")), "--port", str(port),
@@ -169,6 +256,7 @@ def main():
         try:
             driver = WebDriver(port)
             browse(driver, page, args.screenshots)
+            bitwarden(driver, page, bw_log, home, args.screenshots)
         except Exception as e:
             check("WebDriver drives the browser", False, repr(e))
             print((home / "webdriver.log").read_text()[-3000:])
@@ -265,6 +353,48 @@ def browse(driver, page, shots):
         time.sleep(2)
         subprocess.run(["import", "-window", "root", str(shots / "page.png")], check=False)
         print(f"Screenshots in {shots}")
+
+
+def bitwarden(driver, page, bw_log, home, shots):
+    login_page = page.rsplit("/", 1)[0] + "/login.html"
+    driver.go(login_page)
+    time.sleep(1)
+    x = XInput()
+    # Into the page first, so the window has the keyboard (there's no window manager here to give it).
+    x.click(700, 450)
+    x.keys("Control_L", "Shift_L", "l")
+    time.sleep(4)  # The popover asks for the master password, as the vault starts locked.
+    x.type(MASTER_PASSWORD)
+    x.keys("Return")
+    filled = {}
+    for _ in range(60):
+        filled = driver.js("""return { user: document.getElementById("user").value,
+                                       pass: document.getElementById("pass").value };""")
+        if filled.get("pass"):
+            break
+        time.sleep(0.5)
+    check("Bitwarden fills in the login (Ctrl+Shift+L, after unlocking)",
+          filled == {"user": LOGIN["username"], "pass": LOGIN["password"]}, filled)
+
+    calls = [json.loads(line) for line in bw_log.read_text().splitlines()] if bw_log.exists() else []
+    check("Bitwarden is asked for this page's logins",
+          any(c["args"][:2] == ["list", "items"] and c["args"][-1] == login_page for c in calls), calls)
+    check("Bitwarden's client never waits for input", bool(calls) and all(c["nointeraction"] for c in calls), calls)
+    check("Bitwarden's client keeps the browser's sign-in apart",
+          bool(calls) and all(c["appdata"] == str(home / ".local/share/superawesomemagicalbrowser/bitwarden") for c in calls), calls)
+
+    # Another origin has no logins; the shortcut says so rather than filling anything.
+    other = login_page.replace("127.0.0.1", "localhost")
+    driver.go(other)
+    time.sleep(1)
+    x.click(700, 450)
+    x.keys("Control_L", "Shift_L", "l")
+    time.sleep(4)
+    untouched = driver.js("""return document.getElementById("pass").value""")
+    check("Bitwarden fills nothing in on a site it has no login for", untouched == "", untouched)
+    if shots:
+        subprocess.run(["import", "-window", "root", str(shots / "bitwarden.png")], check=False)
+    x.keys("Escape")
 
 
 if __name__ == "__main__":

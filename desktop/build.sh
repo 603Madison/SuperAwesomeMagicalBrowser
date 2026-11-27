@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Builds SuperAwesomeMagical Browser for Linux: our part of it (the launcher, the presets, the start
-# page and Lexend), packaged to depend on Ladybird's own 'ladybird' package, which brings the
-# browser itself and keeps it up to date.
+# Builds SuperAwesomeMagical Browser for Linux: Ladybird as we build it (with Bitwarden in the toolbar), Bitwarden's
+# command-line client, and our part (the launcher, the presets, the start page and Lexend).
 #
-#   desktop/build.sh            the files, laid out as installed (in desktop/out/stage)
-#   desktop/build.sh deb        ... and the .deb (Ubuntu); needs dpkg-deb
-#   desktop/build.sh rpm        ... and the .rpm (Fedora); needs rpmbuild
+#   desktop/build.sh deb        the .deb (Ubuntu 24.04 and newer); needs dpkg-deb
+#   desktop/build.sh rpm        the .rpm (Fedora); needs rpmbuild
 #   desktop/build.sh all        both
+#
+# They are made from what CI's other jobs leave in desktop/out:
+#   ladybird/ladybird-ubuntu-24.04.tar.gz and .depends   Ladybird for the .deb (desktop/ladybird/build-ladybird.sh)
+#   ladybird/ladybird-fedora-44.tar.gz and .requires     Ladybird for the .rpm
+#   bitwarden/bw                                         Bitwarden's command-line client (BITWARDEN_CLI_VERSION)
 #
 # Versions and checksums are in desktop/release.env. Downloads are cached in desktop/.cache.
 set -euo pipefail
@@ -18,6 +21,7 @@ source "$here/release.env"
 APP=superawesomemagicalbrowser
 APP_ID=io.github._603madison.SuperAwesomeMagicalBrowser
 SHARE=/usr/share/$APP
+LIB=/usr/lib/$APP
 FULL_VERSION="$VERSION-$RELEASE"
 cache="$here/.cache"
 out="$here/out"
@@ -29,6 +33,7 @@ fetch() { # url dest (kept in the cache once downloaded)
     mv "$2.part" "$2"
   fi
 }
+need() { [ -s "$1" ] || { echo "Missing $1 (see the top of desktop/build.sh)" >&2; exit 1; }; }
 
 get_lexend() {
   local dir="$cache/lexend-$LEXEND_REV" base="https://raw.githubusercontent.com/google/fonts/$LEXEND_REV/ofl/lexend"
@@ -38,12 +43,18 @@ get_lexend() {
   echo "$LEXEND_SHA256  $dir/Lexend[wght].ttf" | sha256sum -c --quiet -
 }
 
-# Lay out the installed files in $1, with the licences in $2 (Debian and Fedora keep them apart).
+# Lay out the installed files in $1 with Ladybird's build for $3, and the licences in $2 (Debian and Fedora keep them
+# apart).
 stage() {
-  local dest=$1 licenses=$2
+  local dest=$1 licenses=$2 system=$3
+  need "$out/ladybird/ladybird-$system.tar.gz"
+  need "$out/bitwarden/bw"
   get_lexend
   rm -rf "$dest"
   install -d "$dest/usr/bin" "$dest$SHARE/fonts" "$dest/usr/share/applications" "$dest/usr/share/metainfo" "$dest$licenses"
+  tar -xzf "$out/ladybird/ladybird-$system.tar.gz" -C "$dest"
+  test -x "$dest$LIB/ladybird/bin/Ladybird"
+  install -D -m755 "$out/bitwarden/bw" "$dest$LIB/bitwarden/bw"
   # Only on the SHARE= line: the launcher's own sed of settings.json names @SHARE@ too.
   sed "/^SHARE=/s|@SHARE@|$SHARE|" "$here/linux/$APP" > "$dest/usr/bin/$APP"
   chmod 755 "$dest/usr/bin/$APP"
@@ -59,41 +70,44 @@ stage() {
   cp -r "$here/linux/icons" "$dest/usr/share/icons/hicolor"
   install -m644 "$cache/lexend-$LEXEND_REV/OFL.txt" "$dest$licenses/Lexend-OFL.txt"
   install -m644 "$here/../LICENSE" "$dest$licenses/SuperAwesomeMagicalBrowser-GPL-3.0.txt"
+  install -m644 "$here/linux/THIRD-PARTY.md" "$dest$licenses/THIRD-PARTY.md"
   install -m644 "$here/edition/start/CREDITS.md" "$dest$licenses/start-page-photo-CREDITS.md"
-  printf '{"version": "%s", "ladybird_min": "%s"}\n' "$FULL_VERSION" "$LADYBIRD_MIN_VERSION" > "$dest$SHARE/version.json"
+  printf '{"version": "%s", "ladybird": "%s", "bitwarden_cli": "%s"}\n' \
+    "$FULL_VERSION" "$LADYBIRD_VERSION" "$BITWARDEN_CLI_VERSION" > "$dest$SHARE/version.json"
 }
 
 deb() {
-  log "Building ${APP}_${FULL_VERSION}_all.deb"
-  local dir="$out/deb"
-  stage "$dir" "/usr/share/doc/$APP"
+  log "Building ${APP}_${FULL_VERSION}_amd64.deb"
+  local dir="$out/deb" system=ubuntu-24.04
+  need "$out/ladybird/ladybird-$system.depends"
+  stage "$dir" "/usr/share/doc/$APP" "$system"
   install -d "$dir/DEBIAN"
   sed -e "s/@VERSION@/$FULL_VERSION/" -e "s/@SIZE@/$(du -sk "$dir" | cut -f1)/" \
-    -e "s/@LADYBIRD_MIN@/$LADYBIRD_MIN_VERSION/" "$here/linux/debian/control" > "$dir/DEBIAN/control"
+    -e "s/@DEPENDS@/$(cat "$out/ladybird/ladybird-$system.depends")/" "$here/linux/debian/control" > "$dir/DEBIAN/control"
   install -m755 "$here/linux/debian/postinst" "$here/linux/debian/prerm" "$dir/DEBIAN/"
-  dpkg-deb --root-owner-group -Zxz --build "$dir" "$out/${APP}_${FULL_VERSION}_all.deb"
+  dpkg-deb --root-owner-group -Zxz --build "$dir" "$out/${APP}_${FULL_VERSION}_amd64.deb"
   rm -rf "$dir"
 }
 
 rpm() {
   log "Building $APP-$FULL_VERSION.x86_64.rpm"
-  local dir="$out/rpm" top="$out/rpmbuild"
-  stage "$dir" "/usr/share/licenses/$APP"
+  local dir="$out/rpm" top="$out/rpmbuild" system=fedora-44
+  need "$out/ladybird/ladybird-$system.requires"
+  stage "$dir" "/usr/share/licenses/$APP" "$system"
   rm -rf "$top"
   install -d "$top"/{BUILD,RPMS,SPECS,SRPMS,SOURCES}
   rpmbuild -bb "$here/linux/$APP.spec" --target x86_64 --quiet \
     --define "_topdir $top" --define "stage $dir" --define "sam_version $VERSION" \
-    --define "sam_release $RELEASE" --define "ladybird_min $LADYBIRD_MIN_VERSION"
+    --define "sam_release $RELEASE" --define "ladybird_requires $(cat "$out/ladybird/ladybird-$system.requires")"
   mv "$top"/RPMS/x86_64/*.rpm "$out/"
   rm -rf "$dir" "$top"
 }
 
 mkdir -p "$out"
 case "${1:-}" in
-  "") stage "$out/stage" "/usr/share/licenses/$APP" ;;
   deb) deb ;;
   rpm) rpm ;;
   all) deb; rpm ;;
-  *) echo "usage: $0 [deb|rpm|all]" >&2; exit 2 ;;
+  *) echo "usage: $0 deb|rpm|all" >&2; exit 2 ;;
 esac
 log "Done: $(ls "$out" | grep -E '\.(deb|rpm)$' | tr '\n' ' ')"

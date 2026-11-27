@@ -1,20 +1,20 @@
-# SuperAwesomeMagical Browser for Linux: Ladybird (from Ladybird's own repositories, which keep it up
-# to date) with our presets, start page and Lexend. This builds the .deb and the .rpm, installs each
-# with Ladybird in Ubuntu and Fedora and runs desktop/check.py there, and publishes releases.
+# SuperAwesomeMagical Browser for Linux: our build of Ladybird (the Ladybird workflow, with the patches in
+# desktop/ladybird), Bitwarden's command-line client, and our presets, start page and Lexend. This makes the .deb and
+# the .rpm, installs each in Ubuntu and Fedora and runs desktop/check.py there, and publishes releases.
 #
 # - Every push and pull request: build and check.
 # - Run workflow with "release" ticked: build, check and release the version in desktop/release.env.
 #   Tick "prerelease" too to publish it without making it the latest release, which is the one
 #   SuperAwesomeMagicalLinux's image installs; run again with "release" alone to make it the latest.
-#
-# Ladybird's own updates need nothing from here: they come with the system's package updates.
+# - Every six hours: if Ladybird has a newer release, build it with our patches, check it, release it as the latest
+#   and commit the new LADYBIRD_VERSION and VERSION to desktop/release.env. Ladybird's security fixes come this way.
 name: Linux
 
 on:
   push:
-    paths: ["desktop/**", "tools/**", "LICENSE", ".github/workflows/linux.yml"]
+    paths: ["desktop/**", "tools/**", "LICENSE", ".github/workflows/linux.yml", ".github/workflows/ladybird.yml"]
   pull_request:
-    paths: ["desktop/**", "tools/**", "LICENSE", ".github/workflows/linux.yml"]
+    paths: ["desktop/**", "tools/**", "LICENSE", ".github/workflows/linux.yml", ".github/workflows/ladybird.yml"]
   workflow_dispatch:
     inputs:
       release:
@@ -25,6 +25,8 @@ on:
         description: "...as a pre-release (not the latest, which SuperAwesomeMagicalLinux installs)"
         type: boolean
         default: false
+  schedule:
+    - cron: "23 */6 * * *"
 
 permissions:
   contents: read
@@ -39,44 +41,107 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+      date: ${{ steps.v.outputs.date }}
+      ladybird: ${{ steps.v.outputs.ladybird }}
+      build: ${{ steps.v.outputs.build }}
       publish: ${{ steps.v.outputs.publish }}
       promote: ${{ steps.v.outputs.promote }}
+      bumped: ${{ steps.v.outputs.bumped }}
     steps:
       - uses: actions/checkout@v4
       - id: v
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
           RELEASE_INPUT: ${{ inputs.release }}
           PRERELEASE_INPUT: ${{ inputs.prerelease }}
         run: |
           source desktop/release.env
-          version="$VERSION-$RELEASE" publish=false promote=false
-          if [ "$RELEASE_INPUT" = true ]; then
+          date=$VERSION rel=$RELEASE ladybird=$LADYBIRD_VERSION
+          build=true publish=false promote=false bumped=false
+          if [ "$EVENT" = schedule ]; then
+            newest=$(curl -fsSL --retry 5 https://download.ladybird.org/releases.json | jq -r '.releases[].version' | sort -V | tail -1)
+            if [ -n "$newest" ] && [ "$newest" != "$ladybird" ] && [ "$(printf '%s\n%s\n' "$ladybird" "$newest" | sort -V | tail -1)" = "$newest" ]; then
+              echo "Ladybird $newest is out (we have $ladybird)"
+              ladybird=$newest date=$(date -u +%Y.%m.%d) rel=1 publish=true bumped=true
+              while git ls-remote --exit-code --tags origin "refs/tags/v$date-$rel" >/dev/null; do rel=$((rel + 1)); done
+            else
+              echo "Still on the newest Ladybird ($ladybird)"
+              build=false
+            fi
+          elif [ "$RELEASE_INPUT" = true ]; then
             publish=true
-            if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            if git ls-remote --exit-code --tags origin "refs/tags/v$date-$rel" >/dev/null; then
               # Already out as a pre-release: make that one the latest, as it is.
-              if [ "$PRERELEASE_INPUT" != true ] && [ "$(gh release view "v$version" --json isPrerelease -q .isPrerelease)" = true ]; then
-                publish=false promote=true
+              if [ "$PRERELEASE_INPUT" != true ] && [ "$(gh release view "v$date-$rel" --json isPrerelease -q .isPrerelease)" = true ]; then
+                build=false publish=false promote=true
               else
-                echo "::error::v$version is already released; raise RELEASE in desktop/release.env"
+                echo "::error::v$date-$rel is already released; raise RELEASE in desktop/release.env"
                 exit 1
               fi
             fi
           fi
-          { echo "version=$version"; echo "publish=$publish"; echo "promote=$promote"; } | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "version=$date-$rel"; echo "date=$date"; echo "release=$rel"; echo "ladybird=$ladybird"
+            echo "build=$build"; echo "publish=$publish"; echo "promote=$promote"; echo "bumped=$bumped"
+          } | tee -a "$GITHUB_OUTPUT"
 
-  build:
-    name: Build
+  ladybird:
+    name: Ladybird
     needs: version
-    if: needs.version.outputs.promote != 'true'
+    if: needs.version.outputs.build == 'true'
+    uses: ./.github/workflows/ladybird.yml
+    with:
+      ladybird: ${{ needs.version.outputs.ladybird }}
+
+  bitwarden:
+    name: Bitwarden's command-line client
+    needs: version
+    if: needs.version.outputs.build == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Download and check it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source desktop/release.env
+          # The open-source build (GPL-3.0 only), checked against the SHA-256 that GitHub records for the release asset.
+          read -r name url digest < <(gh api "repos/bitwarden/clients/releases/tags/cli-v$BITWARDEN_CLI_VERSION" --jq \
+            '.assets[] | select(.name | test("^bw-oss-linux-[0-9.]+\\.zip$")) | [.name, .browser_download_url, .digest] | @tsv')
+          test -n "$name" && [[ "$digest" == sha256:* ]]
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/$name" "$url"
+          echo "${digest#sha256:}  $RUNNER_TEMP/$name" | sha256sum -c -
+          mkdir -p bitwarden
+          unzip -o -j "$RUNNER_TEMP/$name" bw -d bitwarden
+          chmod 755 bitwarden/bw
+          bitwarden/bw --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bitwarden-cli
+          path: bitwarden/bw
+
+  build:
+    name: Packages
+    needs: [version, ladybird, bitwarden]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: "ladybird-*", path: desktop/out/ladybird, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { name: bitwarden-cli, path: desktop/out/bitwarden }
+      - name: The version to build
+        run: |
+          sed -i -e "s/^VERSION=.*/VERSION=${{ needs.version.outputs.date }}/" -e "s/^RELEASE=.*/RELEASE=${{ needs.version.outputs.release }}/" \
+            -e "s/^LADYBIRD_VERSION=.*/LADYBIRD_VERSION=${{ needs.version.outputs.ladybird }}/" desktop/release.env
       - run: sudo apt-get update && sudo apt-get install -y rpm
       - run: desktop/build.sh all
       - uses: actions/upload-artifact@v4
         with:
           name: packages
+          compression-level: 0
           path: |
             desktop/out/*.deb
             desktop/out/*.rpm
@@ -88,9 +153,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { image: "ubuntu:24.04", suite: noble }
-          - { image: "ubuntu:26.04", suite: resolute }
+        image: ["ubuntu:24.04", "ubuntu:26.04"]
     container:
       image: ${{ matrix.image }}
       options: --shm-size=2g
@@ -98,21 +161,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { name: packages }
-      - name: Ladybird's repository, as its download page has it
-        run: |
-          apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl
-          install -d /etc/apt/keyrings
-          curl -fsSL https://apt.ladybird.org/ladybird.asc -o /etc/apt/keyrings/ladybird.asc
-          curl -fsSL https://apt.ladybird.org/ladybird-${{ matrix.suite }}.sources -o /etc/apt/sources.list.d/ladybird.sources
-      - name: Install the package (it brings Ladybird) and what the check needs
+      - name: Install the package and what the check needs
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y ./superawesomemagicalbrowser_*_all.deb xvfb imagemagick
+          DEBIAN_FRONTEND=noninteractive apt-get install -y ./superawesomemagicalbrowser_*_amd64.deb xvfb imagemagick libxtst6
       - run: python3 desktop/check.py --screenshots screenshots
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: screenshots-${{ matrix.suite }}
+          name: screenshots-${{ strategy.job-index }}
           path: screenshots
 
   test-rpm:
@@ -130,10 +187,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { name: packages }
-      - name: Ladybird's repository, as its download page has it
-        run: curl -fsSL https://rpm.ladybird.org/ladybird.repo -o /etc/yum.repos.d/ladybird.repo
-      - name: Install the package (it brings Ladybird) and what the check needs
-        run: dnf install -y ./superawesomemagicalbrowser-*.x86_64.rpm xorg-x11-server-Xvfb python3
+      - name: Install the package and what the check needs
+        run: dnf install -y ./superawesomemagicalbrowser-*.x86_64.rpm xorg-x11-server-Xvfb python3 libXtst
       - run: python3 desktop/check.py
 
   release:
@@ -145,18 +200,36 @@ jobs:
       contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      LADYBIRD: ${{ needs.version.outputs.ladybird }}
       PRERELEASE: ${{ inputs.prerelease }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { name: packages, path: dist }
+      - name: Record the new Ladybird in desktop/release.env
+        if: needs.version.outputs.bumped == 'true'
+        run: |
+          sed -i -e "s/^VERSION=.*/VERSION=${{ needs.version.outputs.date }}/" -e "s/^RELEASE=.*/RELEASE=${{ needs.version.outputs.release }}/" \
+            -e "s/^LADYBIRD_VERSION=.*/LADYBIRD_VERSION=$LADYBIRD/" desktop/release.env
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Follow Ladybird $LADYBIRD"
+          git push
       - name: Publish
         run: |
           cd dist
           sha256sum * > SHA256SUMS
           notes=../release-notes/v$VERSION.md
-          [ -f "$notes" ] || { echo "::error::Write $notes first"; exit 1; }
+          if [ ! -f "$notes" ]; then
+            if [ "${{ needs.version.outputs.bumped }}" = true ]; then
+              notes=$(mktemp)
+              printf 'SuperAwesomeMagical Browser on Ladybird %s, with Bitwarden in the toolbar.\n\nInstall the `.rpm` on Fedora and the `.deb` on Ubuntu 24.04 and newer, as before.\n' "$LADYBIRD" > "$notes"
+            else
+              echo "::error::Write release-notes/v$VERSION.md first"
+              exit 1
+            fi
+          fi
           flags=(--latest)
           [ "$PRERELEASE" = true ] && flags=(--prerelease --latest=false)
           gh release create "v$VERSION" --target "$(git rev-parse HEAD)" "${flags[@]}" \

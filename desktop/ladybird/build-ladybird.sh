@@ -7,8 +7,10 @@
 #
 # Runs as root in a fresh fedora:44 or ubuntu:24.04 container (CI's "Ladybird" jobs): it installs what the build needs
 # with Ladybird's own script. On Ubuntu 24.04, whose Qt is too old, Qt is built too and comes with the browser.
-# Leaves OUT/ladybird-<system>.tar.gz (the installed files) and OUT/ladybird-<system>.depends (the .deb's Depends, on
-# Ubuntu). CACHE (default /cache) keeps vcpkg's built packages and ccache's objects between builds.
+# Leaves OUT/ladybird-<system>.tar.gz (the installed files) and the packages it needs from the system: on Ubuntu
+# OUT/ladybird-<system>.depends (the .deb's Depends), on Fedora
+# OUT/ladybird-<system>.requires (the .rpm's Requires). CACHE (default /cache) keeps vcpkg's built packages and ccache's
+# objects between builds.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -75,6 +77,18 @@ rm -rf "$stage"
 DESTDIR=$stage cmake --install Build --strip --component ladybird_Runtime
 test -x "$stage$prefix/bin/Ladybird"
 tar -czf "$out/ladybird-$system.tar.gz" -C "$stage" .
+
+if [ "$ID" = fedora ]; then
+    # What the installed programs need from Fedora: the packages that own the libraries they load. Libraries that come
+    # with the browser are in its own lib folder, which no package owns.
+    log "Working out the .rpm's dependencies"
+    mapfile -t elves < <(find "$stage$prefix" -type f -exec sh -c 'file -b "$1" | grep -q "^ELF"' _ {} \; -print)
+    for elf in "${elves[@]}"; do ldd "$elf" 2>/dev/null; done | sed -n 's/.*=> \(\/[^ ]*\) .*/\1/p' | sort -u |
+        grep -v "^$stage" | xargs -r rpm -qf --qf '%{NAME}\n' 2>/dev/null | grep -v "not owned" | sort -u |
+        paste -sd, - > "$out/ladybird-$system.requires"
+    cat "$out/ladybird-$system.requires"
+    test -s "$out/ladybird-$system.requires"
+fi
 
 if [ "$ID" = ubuntu ]; then
     # What the installed programs need from Ubuntu, worked out as Debian's own tools do. Libraries that come with the

@@ -1,18 +1,19 @@
 Package: superawesomemagicalbrowser
 Version: @VERSION@
-Architecture: all
+Architecture: amd64
 Maintainer: SuperAwesomeMagical <superawesomemagicalbrowser@users.noreply.github.com>
 Installed-Size: @SIZE@
-Depends: ladybird (>= @LADYBIRD_MIN@), python3
+Depends: @DEPENDS@, fonts-liberation2, python3
 Provides: www-browser, gnome-www-browser
 Section: web
 Priority: optional
 Homepage: https://github.com/603Madison/SuperAwesomeMagicalBrowser
-Description: Ladybird with your tabs down the side, in the SuperAwesomeMagical look
+Description: Ladybird with your tabs down the side and Bitwarden built in
  SuperAwesomeMagical Browser is Ladybird, the independent browser, set up the
  SuperAwesomeMagical way: tabs down the left side, Lexend for the interface and
- for pages, the Lavender colour, Ecosia for searches, ads and trackers blocked,
- and a start page with a big clock over the northern lights.
+ for pages, Ecosia for searches, ads and trackers blocked, a start page with a
+ big clock over the northern lights, and Bitwarden in the toolbar to fill in
+ your logins.
  .
- Ladybird itself is the 'ladybird' package from Ladybird's own repository
- (apt.ladybird.org), which keeps it up to date. It runs in a profile of its own.
+ It carries its own build of Ladybird (with Bitwarden added) and Bitwarden's
+ command-line client, and runs in a profile of its own.
