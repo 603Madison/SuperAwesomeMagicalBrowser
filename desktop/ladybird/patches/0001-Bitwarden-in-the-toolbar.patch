@@ -1,6 +1,49 @@
+diff --git a/Services/Hub/ConnectionFromUI.cpp b/Services/Hub/ConnectionFromUI.cpp
+index b2b002fa..fe7867a5 100644
+--- a/Services/Hub/ConnectionFromUI.cpp
++++ b/Services/Hub/ConnectionFromUI.cpp
+@@ -1353,6 +1353,13 @@ void ConnectionFromUI::view_find_in_page_end(u64 view_id)
+     }
+ }
+ 
++// SuperAwesomeMagical Browser: Bitwarden fills a login in with a script.
++void ConnectionFromUI::view_run_javascript(u64 view_id, String source)
++{
++    if (auto* view = find_view(view_id))
++        view->run_javascript(source);
++}
++
+ void ConnectionFromUI::view_report_website_issue(u64 view_id)
+ {
+     if (auto* view = find_view(view_id)) {
+diff --git a/Services/Hub/ConnectionFromUI.h b/Services/Hub/ConnectionFromUI.h
+index 8929df17..17286f6b 100644
+--- a/Services/Hub/ConnectionFromUI.h
++++ b/Services/Hub/ConnectionFromUI.h
+@@ -221,6 +221,7 @@ private:
+     virtual void view_find_in_page_previous_match(u64 view_id) override;
+     virtual void view_find_in_page_end(u64 view_id) override;
+     virtual void view_report_website_issue(u64 view_id) override;
++    virtual void view_run_javascript(u64 view_id, String source) override;
+     virtual void view_request_accessibility_tree(u64 view_id) override;
+     virtual void view_perform_accessibility_action(u64 view_id, i64 node_id, String action) override;
+     virtual void view_clear_node_picker(u64 view_id) override;
+diff --git a/Services/Hub/HubServer.ipc b/Services/Hub/HubServer.ipc
+index 6bbc856b..bd61f9bc 100644
+--- a/Services/Hub/HubServer.ipc
++++ b/Services/Hub/HubServer.ipc
+@@ -295,6 +295,8 @@ endpoint HubServer
+     view_find_in_page_previous_match(u64 view_id) =|
+     view_find_in_page_end(u64 view_id) =|
+     view_report_website_issue(u64 view_id) =|
++    // SuperAwesomeMagical Browser: Bitwarden fills a login in with a script.
++    view_run_javascript(u64 view_id, String source) =|
+     view_request_accessibility_tree(u64 view_id) =|
+     view_perform_accessibility_action(u64 view_id, i64 node_id, String action) =|
+     view_clear_node_picker(u64 view_id) =|
 diff --git a/UI/Qt/Bitwarden.cpp b/UI/Qt/Bitwarden.cpp
 new file mode 100644
-index 00000000..23b2dbb6
+index 00000000..f7e5a634
 --- /dev/null
 +++ b/UI/Qt/Bitwarden.cpp
 @@ -0,0 +1,737 @@
@@ -389,7 +432,7 @@ index 00000000..23b2dbb6
 +    label->setObjectName(object_name);
 +    label->setWordWrap(true);
 +    label->setTextFormat(Qt::PlainText);
-+    layout->addWidget(label);
++    layout.addWidget(label);
 +    return label;
 +}
 +
@@ -928,6 +971,19 @@ index e465ac5d..b50100e5 100644
      ExternalLink,
      ZoomOut,
      Sidebar,
+diff --git a/UI/Qt/RemoteView.h b/UI/Qt/RemoteView.h
+index c33ee667..a8027efc 100644
+--- a/UI/Qt/RemoteView.h
++++ b/UI/Qt/RemoteView.h
+@@ -178,6 +178,8 @@ public:
+     bool can_redo() const { return m_state.can_redo; }
+     bool can_view_source() const { return m_state.can_view_source; }
+     void report_website_issue() { HubConnection::the().async_view_report_website_issue(view_id()); }
++    // SuperAwesomeMagical Browser: Bitwarden fills a login in with a script.
++    void run_javascript(String const& source) { HubConnection::the().async_view_run_javascript(view_id(), source); }
+     void request_accessibility_tree() { HubConnection::the().async_view_request_accessibility_tree(view_id()); }
+     void perform_accessibility_action(i64 node_id, String action) { HubConnection::the().async_view_perform_accessibility_action(view_id(), node_id, move(action)); }
+     void clear_node_picker() { HubConnection::the().async_view_clear_node_picker(view_id()); }
 diff --git a/UI/Qt/WebContentView.cpp b/UI/Qt/WebContentView.cpp
 index 9db0efa9..0d02c877 100644
 --- a/UI/Qt/WebContentView.cpp

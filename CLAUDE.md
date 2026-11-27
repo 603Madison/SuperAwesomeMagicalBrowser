@@ -1,9 +1,10 @@
 # Notes for Claude
 
-SuperAwesomeMagical Browser for Linux is Ladybird, from Ladybird's own repositories and never
-changed, started by our launcher with our presets, start page and Lexend (`desktop/edition`); and
-an Android app on GeckoView (`android/`) in the same look, since Ladybird has no Android version.
-The README explains the layout; this is what to know when changing it.
+SuperAwesomeMagical Browser for Linux is Ladybird, built by our CI from Ladybird's release with our
+patches (`desktop/ladybird`: Bitwarden in the toolbar), started by our launcher with our presets,
+start page and Lexend (`desktop/edition`); and an Android app on GeckoView (`android/`) in the
+same look, since Ladybird has no Android version. The README explains the layout; this is what to
+know when changing it.
 
 ## Design
 
@@ -16,14 +17,16 @@ them. The start page echoes the Linux sign-in screen. The owner likes her tabs o
 Lexend; Ecosia is the default search engine (for now, the owner's choice), and she chose Ladybird
 over Firefox for Linux in November 2026.
 
-Ladybird's own interface can't be restyled without patching it: its Lavender colour theme is the
-nearest to the aurora's purple. A patched build (exact slate and violet) would mean building
-Ladybird from source for every one of its releases; that's for the owner to decide.
+Ladybird's interface uses its Lavender colour theme, the nearest to the aurora's purple. Now that we
+build Ladybird, an exact slate and violet would be one more patch; every patch is more to carry
+from one Ladybird release to the next, so keep them few and small.
+
+The owner needs a password manager to use a browser at all: Bitwarden must keep working.
 
 ## How the edition works (Ladybird 2026.48)
 
 - The launcher (`desktop/linux/superawesomemagicalbrowser`) runs
-  `/opt/ladybird/bin/Ladybird --profile superawesomemagical`. When that profile has no
+  `/usr/lib/superawesomemagicalbrowser/ladybird/bin/Ladybird --profile superawesomemagical`. When that profile has no
   `Settings.json` yet, it writes `edition/settings.json` there (with `@SHARE@` filled in), and
   first copies the Firefox-based versions' bookmarks (`~/.local/share/superawesomemagicalbrowser/profile`)
   into `Bookmarks.json` with `firefox-bookmarks.py`. After that the settings are the person's:
@@ -39,10 +42,35 @@ Ladybird from source for every one of its releases; that's for the owner to deci
   shortcuts live in its `localStorage`. Put text from outside into it only as text, never markup.
 - Ladybird names its windows "Ladybird" and its app ID is `org.ladybird.Ladybird`, which is why the
   desktop file's `StartupWMClass` says so.
-- The packages depend on `ladybird >= LADYBIRD_MIN_VERSION` (from `desktop/release.env`): raise it
-  when the presets need something newer. Ladybird's updates come from its repositories.
-- SuperAwesomeMagicalLinux installs the latest release's rpm (with Ladybird's repository); a
-  release that would break that image goes out as a pre-release first.
+- SuperAwesomeMagicalLinux installs the latest release's rpm; a release that would break that
+  image goes out as a pre-release first.
+
+## Our Ladybird (desktop/ladybird)
+
+- `build-ladybird.sh` builds `LADYBIRD_VERSION` with `patches/*.patch` in a fresh Fedora 44 or
+  Ubuntu 24.04 container, as Ladybird's own release build does (Distribution preset, without LTO,
+  symbol files or the update check), and installs it under `/usr/lib/superawesomemagicalbrowser/ladybird`.
+  Ubuntu 24.04's Qt is too old, so that build has Qt built in (`LADYBIRD_BUILD_QT`); its .deb works
+  on 26.04 too. It also works out the packages' dependencies (`dpkg-shlibdeps`, `rpm -qf`).
+- `.github/workflows/ladybird.yml` runs it with vcpkg's and ccache's caches; a first build takes
+  hours, later ones much less, and the same Ladybird and patches are never built twice. The
+  Linux workflow follows Ladybird's releases (`download.ladybird.org/releases.json`) every six
+  hours. When a patch no longer applies to a new release, that run fails: fix the patch.
+- Make a patch in a checkout of Ladybird at the tag (`git clone --depth 1 --branch <tag>`): edit,
+  `git add -N` new files, `git diff > patches/NNNN-name.patch`. Keep our code in files of our own
+  (`UI/Qt/Bitwarden.*`) and the hooks into Ladybird's files few, marked "SuperAwesomeMagical Browser".
+- Bitwarden (`UI/Qt/Bitwarden.cpp`): the button and Ctrl+Shift+L (in `WindowToolbar.cpp`; the
+  shortcut is browser-reserved in `WebContentView.cpp` so pages can't take it) open a popover that
+  signs in, unlocks and lists logins through Bitwarden's command-line client. That client is
+  `/usr/lib/superawesomemagicalbrowser/bitwarden/bw`, the "oss" build (`BITWARDEN_CLI_VERSION`),
+  or `SAMB_BITWARDEN_CLI`; its data is in `~/.local/share/superawesomemagicalbrowser/bitwarden`.
+  The session key lives only in memory and goes to `bw` in `BW_SESSION`; master passwords go in
+  `SAMB_BW_PASSWORD` (`--passwordenv`), never on a command line. The fill script checks
+  `location.origin` against the page the login was looked up for, and takes its values as JSON.
+- Security: Ladybird publishes advisories at github.com/LadybirdBrowser/ladybird/security. Every
+  one up to Nov 2026 is fixed in 2026.48.0 (GHSA-3v9p-556w-v6vp only from 2026.48.0). Following
+  releases quickly is what keeps the browser patched; backport a fix as a patch only if a release
+  is slow to come.
 
 ## The Android app (android/)
 
@@ -66,19 +94,23 @@ builds `android/keystore/release.properties` (git-ignored). Never generate a rep
 desktop/build.sh all && python3 desktop/check.py
 ```
 
-`check.py` checks the installed packages (install the .deb or .rpm first, with Ladybird): it runs
-the real launcher in a throwaway home with an old Firefox-based profile there, then drives
-Ladybird over its own WebDriver (W3C, `/opt/ladybird/bin/WebDriver`) in the same profile, and
-starts Xvfb itself when there's no display. Add a check when adding a feature. Look at the
-screenshots (`--screenshots DIR`) after visual changes, light and dark. CI runs it with the
-packages installed on Ubuntu 24.04 and 26.04 and Fedora 44 and 45.
+`check.py` checks the installed package (install the .deb or .rpm first): it runs the real
+launcher in a throwaway home with an old Firefox-based profile there, then drives Ladybird over
+its own WebDriver (W3C, `/usr/lib/superawesomemagicalbrowser/ladybird/bin/WebDriver`) in the same
+profile, and starts Xvfb itself when there's no display. Bitwarden is checked with a stand-in
+`bw` (`SAMB_BITWARDEN_CLI`), with Ctrl+Shift+L and the master password typed through XTEST
+(it needs libXtst). Add a check when adding a feature. Look at the screenshots (`--screenshots
+DIR`) after visual changes, light and dark. CI runs it with the packages installed on Ubuntu 24.04
+and 26.04 and Fedora 44 and 45.
 
 For the Android app: `cd android && ./gradlew testDebugUnitTest lintDebug assembleRelease`.
 
 ## Releases
 
-Linux: `desktop/release.env` holds our `VERSION` (the date) and `RELEASE`. Raise them, write
-`release-notes/vVERSION-RELEASE.md`, push, then run the **Linux** workflow with *release* ticked
+Linux: `desktop/release.env` holds our `VERSION` (the date), `RELEASE`, `LADYBIRD_VERSION` and
+`BITWARDEN_CLI_VERSION`. New Ladybird releases are followed and released by CI on their own. For a
+release of our own changes, raise `VERSION`/`RELEASE`, write `release-notes/vVERSION-RELEASE.md`,
+push, then run the **Linux** workflow with *release* ticked
 (sessions can't push tags; the workflow makes the tag). Tick *prerelease* too to publish without
 making it the latest release; running it again with *release* alone makes it the latest.
 
@@ -89,10 +121,13 @@ job is green, and send the owner the APK in chat as well.
 
 ## Building in a Claude cloud sandbox
 
-- Ladybird: download its `.deb` (the URL and SHA-256 are in `download.ladybird.org/releases.json`),
-  check the hash and its signature (`apt.ladybird.org/ladybird.asc`), then `dpkg -i` it with its
-  dependencies from Ubuntu's archive (`apt-get update` first). Adding Ladybird's apt repository to
-  the sandbox is refused. Then `dpkg -i` our .deb.
+- Ladybird can't be built here: vcpkg fetches its dependencies' sources from GitHub archives,
+  which the sandbox can't reach (and the Ubuntu build adds LLVM's and Kitware's apt repositories,
+  which the sandbox refuses). Build in CI and download the `packages` artifact, or for trying
+  things in Ladybird itself, its official `.deb` (URL and SHA-256 in
+  `download.ladybird.org/releases.json`; check the signature with `apt.ladybird.org/ladybird.asc`),
+  `dpkg -i` with its dependencies from Ubuntu's archive.
+- Bitwarden's client comes from GitHub's release downloads, which the sandbox can't reach either.
 - `apt-get install -y rpm` gives `rpmbuild`. GitHub release downloads aren't reachable.
 - Ladybird's IPC sockets live in `XDG_RUNTIME_DIR`, and a socket path must be under 108 bytes:
   keep that directory short, and use `--profile NAME` rather than a long `--profile-path`.

@@ -1,9 +1,9 @@
 # SuperAwesomeMagical Browser
 
 [Ladybird](https://ladybird.org), the independent web browser, set up the SuperAwesomeMagical
-family's way: your tabs down the left side, Lexend everywhere, Ecosia for searches, and a start
-page like the SuperAwesomeMagicalLinux sign-in screen. For Linux (Fedora- and Ubuntu-based), and
-an Android app in the same look.
+family's way: your tabs down the left side, Lexend everywhere, Ecosia for searches, a start page
+like the SuperAwesomeMagicalLinux sign-in screen, and **Bitwarden built in**. For Linux (Fedora- and
+Ubuntu-based), and an Android app in the same look.
 
 ![The start page in dark mode: a large Lexend clock and a rounded slate card with an Ecosia search box and shortcuts, over a photo of purple and green northern lights; tabs run down the left](docs/screenshots/start-dark.jpg)
 
@@ -15,8 +15,14 @@ an Android app in the same look.
 - **A start page like the sign-in screen.** A big Lexend clock, an Ecosia search box and your
   shortcuts over the northern lights (soft purple and green glows in light mode). *Add* puts a
   site there; hover one for × to take it off.
+- **Bitwarden built in.** The key button beside the address field, or **Ctrl+Shift+L**, fills in
+  your login for the site you're on; with several, you pick one. Sign in once with your email and
+  master password (and two-step code) or an API key, on bitwarden.com, bitwarden.eu or your own
+  server (Vaultwarden too); after that it only asks for your master password. Its verification
+  code is copied for you as the login is filled in.
 - **Ecosia** is the search engine (change it in Settings).
 - **Quiet.** Ads and trackers blocked, Global Privacy Control on. Ladybird has no telemetry.
+- **Kept up to date.** A new Ladybird release is built, checked and released here within hours.
 - **Its own profile**, so it never mixes with a separately installed Ladybird.
 - **Your bookmarks come along** from the Firefox-based versions on its first start.
 
@@ -30,16 +36,11 @@ promises about its security yet.
 
 ## Installing on Linux
 
-The browser itself comes from Ladybird's own repository, which keeps it up to date, so add that
-first. Then install this package from the latest
-[release](https://github.com/603Madison/SuperAwesomeMagicalBrowser/releases/latest); it brings
-Ladybird with it.
+Download the package for your system from the latest
+[release](https://github.com/603Madison/SuperAwesomeMagicalBrowser/releases/latest). It has
+everything in it: Ladybird, Bitwarden's client and the rest.
 
 **Fedora** and others with dnf: `superawesomemagicalbrowser-<version>.x86_64.rpm`
-
-```bash
-sudo curl -fsSL -o /etc/yum.repos.d/ladybird.repo https://rpm.ladybird.org/ladybird.repo
-```
 
 ```bash
 sudo dnf install ./superawesomemagicalbrowser-*.x86_64.rpm
@@ -47,17 +48,10 @@ sudo dnf install ./superawesomemagicalbrowser-*.x86_64.rpm
 
 SuperAwesomeMagicalLinux has it already.
 
-**Ubuntu** 24.04: `superawesomemagicalbrowser_<version>_all.deb` (on 26.04 and newer, use
-`ladybird-resolute.sources` in place of `ladybird-noble.sources`)
+**Ubuntu** 24.04 and newer, Mint, Pop!_OS: `superawesomemagicalbrowser_<version>_amd64.deb`
 
 ```bash
-sudo install -d /etc/apt/keyrings
-sudo curl -fsSL -o /etc/apt/keyrings/ladybird.asc https://apt.ladybird.org/ladybird.asc
-sudo curl -fsSL -o /etc/apt/sources.list.d/ladybird.sources https://apt.ladybird.org/ladybird-noble.sources
-```
-
-```bash
-sudo apt update && sudo apt install ./superawesomemagicalbrowser_*_all.deb
+sudo apt install ./superawesomemagicalbrowser_*_amd64.deb
 ```
 
 To make it your default browser:
@@ -66,12 +60,14 @@ To make it your default browser:
 xdg-settings set default-web-browser io.github._603madison.SuperAwesomeMagicalBrowser.desktop
 ```
 
-**Updates.** Ladybird's updates come with your system's updates, from Ladybird's repository. A
-new release here is only for changes to our part (the start page, the presets).
+**Updates.** CI checks for a new Ladybird every six hours and builds, tests and publishes it on
+its own, so install the newest package when one comes out (SuperAwesomeMagicalLinux does that
+for you).
 
 **Your data** lives in Ladybird's profile `superawesomemagical`
 (`~/.config/Ladybird/Profiles/superawesomemagical`, and the matching folders in `~/.local/share`
-and `~/.cache`). The Firefox-based versions' profile stays in
+and `~/.cache`); Bitwarden's sign-in is in `~/.local/share/superawesomemagicalbrowser/bitwarden`,
+kept encrypted by Bitwarden's client. The Firefox-based versions' profile stays in
 `~/.local/share/superawesomemagicalbrowser/profile`; its bookmarks are copied over once, and you
 can delete it when you no longer need it.
 
@@ -96,9 +92,13 @@ from the newest `android-v…` [release](https://github.com/603Madison/SuperAwes
 
 ## How it's made
 
-It is **Ladybird's own package**, from Ladybird's repositories, unchanged. This package adds a
-launcher and a few files beside it (`desktop/edition`, installed in
-`/usr/share/superawesomemagicalbrowser`):
+It is **Ladybird**, built from Ladybird's own release with one change of ours
+(`desktop/ladybird/patches`): **Bitwarden in the toolbar**. The browser's interface talks to
+Bitwarden's own command-line client (`bw`, which comes with the package): it signs in, keeps the
+vault encrypted and matches logins to sites by Bitwarden's rules. The browser holds the key that
+unlocks the vault only in memory, locks it 30 minutes after you last used it, and fills a login only
+into a page still at the site it was looked up for. Everything else is beside Ladybird
+(`desktop/edition`, installed in `/usr/share/superawesomemagicalbrowser`):
 
 - `superawesomemagicalbrowser` (in `desktop/linux`): the launcher. It starts Ladybird in its own
   profile; on the first start it writes the presets there and brings the bookmarks over.
@@ -112,7 +112,9 @@ launcher and a few files beside it (`desktop/edition`, installed in
 
 ## Building
 
-On Linux with `curl` (plus `dpkg-deb` for the .deb and `rpmbuild` for the .rpm):
+Ladybird takes hours to build, so CI does it (`.github/workflows/ladybird.yml`, running
+`desktop/ladybird/build-ladybird.sh` in Fedora 44 and Ubuntu 24.04 containers) and keeps the
+result. With those builds and Bitwarden's client in `desktop/out` (see the top of `build.sh`):
 
 ```bash
 desktop/build.sh all
@@ -122,9 +124,9 @@ desktop/build.sh all
 python3 desktop/check.py
 ```
 
-`build.sh` puts the packages in `desktop/out`; `check.py` installs nothing, but checks the
-installed packages with Ladybird (it needs Xvfb when there's no display). `desktop/release.env`
-holds our version, the oldest Ladybird it needs, and Lexend's pin.
+`build.sh` puts the packages in `desktop/out`; `check.py` checks the installed package (it needs
+Xvfb when there's no display), Bitwarden included. `desktop/release.env` holds our version,
+the Ladybird release we build, the Bitwarden client's version, and Lexend's pin.
 
 The Android app is a Gradle project in `android/` (Kotlin and Jetpack Compose on GeckoView), with
 its version and GeckoView's in `android/release.env`:
@@ -134,13 +136,14 @@ cd android && ./gradlew testDebugUnitTest assembleRelease
 ```
 
 `tools/icons.py` draws the icon. CI (`.github/workflows/linux.yml`) builds every change, installs
-the packages with Ladybird on Ubuntu 24.04 and 26.04 and Fedora 44 and 45 and checks them there,
-and publishes releases; `.github/workflows/android.yml` tests the app, follows GeckoView and
+the packages on Ubuntu 24.04 and 26.04 and Fedora 44 and 45 and checks them there, follows
+Ladybird's releases and publishes ours; `.github/workflows/android.yml` tests the app, follows GeckoView and
 publishes the signed APKs.
 
 ## Licence
 
 GPL-3.0, like the rest of the family, for our files. Ladybird is the Ladybird Browser
-Initiative's, under the BSD 2-Clause licence; this is not a Ladybird product. Lexend is under the
-SIL Open Font Licence. The start page photo, *Aurora borealis, Upper Geyser Basin* by NPS / Neal
+Initiative's, under the BSD 2-Clause licence; this is not a Ladybird product. Bitwarden's
+command-line client is Bitwarden's, under the GPL-3.0; this is not a Bitwarden product either.
+Lexend is under the SIL Open Font Licence. The start page photo, *Aurora borealis, Upper Geyser Basin* by NPS / Neal
 Herbert, is in the public domain (see `desktop/edition/start/CREDITS.md`).
