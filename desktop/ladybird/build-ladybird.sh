@@ -53,6 +53,8 @@ export CCACHE_DIR=$cache/ccache CCACHE_MAXSIZE=3G CCACHE_BASEDIR=$src CCACHE_COM
 build_qt=OFF
 if [ "$ID" = ubuntu ] && dpkg --compare-versions "$VERSION_ID" lt 26; then build_qt=ON; fi
 cd "$src"
+# vcpkg itself, at the revision Ladybird's vcpkg.json names, as Ladybird's own CI fetches it.
+python3 Meta/ladybird.py vcpkg --preset Distribution
 # Ladybird's Distribution build, but without link-time optimization and symbol files (they double the time and the
 # memory a 4-core CI machine has), and without Ladybird's update check: updates come from us.
 cmake --preset Distribution -B Build \

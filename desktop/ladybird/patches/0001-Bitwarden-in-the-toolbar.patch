@@ -1,0 +1,1090 @@
+diff --git a/UI/Qt/Bitwarden.cpp b/UI/Qt/Bitwarden.cpp
+new file mode 100644
+index 00000000..23b2dbb6
+--- /dev/null
++++ b/UI/Qt/Bitwarden.cpp
+@@ -0,0 +1,737 @@
++/*
++ * Copyright (c) 2026, SuperAwesomeMagical Browser
++ *
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++#include <LibURL/URL.h>
++#include <UI/Qt/Bitwarden.h>
++#include <UI/Qt/ChromeStyle.h>
++#include <UI/Qt/StringUtils.h>
++#include <UI/Qt/Tab.h>
++
++#include <QApplication>
++#include <QClipboard>
++#include <QComboBox>
++#include <QDir>
++#include <QFile>
++#include <QFileInfo>
++#include <QFrame>
++#include <QHBoxLayout>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QLabel>
++#include <QLineEdit>
++#include <QProcessEnvironment>
++#include <QPushButton>
++#include <QStandardPaths>
++#include <QUrl>
++#include <QVBoxLayout>
++
++namespace Ladybird {
++
++static constexpr int POPOVER_WIDTH = 320;
++static constexpr int COMMAND_TIMEOUT_MS = 90 * 1000;
++
++// Where the packages put Bitwarden's command-line client; SAMB_BITWARDEN_CLI points elsewhere, and failing both, bw
++// is looked for on the PATH.
++static constexpr auto BUNDLED_CLI = "/usr/lib/superawesomemagicalbrowser/bitwarden/bw";
++
++namespace {
++
++// One run of bw, which hands its result to the callback once and then goes.
++class BitwardenJob final : public QProcess {
++public:
++    AK_ALLOC_WITH_KMALLOC;
++
++    explicit BitwardenJob(QObject* parent)
++        : QProcess(parent)
++    {
++    }
++
++    Function<void(int exit_code, bool ran)> on_done;
++
++    void finish(int exit_code, bool ran)
++    {
++        if (m_finished)
++            return;
++        m_finished = true;
++        if (on_done)
++            on_done(exit_code, ran);
++        deleteLater();
++    }
++
++private:
++    bool m_finished { false };
++};
++
++}
++
++static QString first_line(QString const& text)
++{
++    for (auto const& line : text.split('\n')) {
++        auto trimmed = line.trimmed();
++        if (!trimmed.isEmpty())
++            return trimmed;
++    }
++    return {};
++}
++
++BitwardenClient& BitwardenClient::the()
++{
++    static BitwardenClient* client = new BitwardenClient;
++    return *client;
++}
++
++BitwardenClient::BitwardenClient()
++{
++    m_lock_timer.setSingleShot(true);
++    m_lock_timer.setInterval(LOCK_AFTER_MS);
++    QObject::connect(&m_lock_timer, &QTimer::timeout, this, [this] { lock(); });
++}
++
++QString BitwardenClient::program() const
++{
++    if (auto configured = qEnvironmentVariable("SAMB_BITWARDEN_CLI"); !configured.isEmpty())
++        return configured;
++    if (QFileInfo(BUNDLED_CLI).isExecutable())
++        return BUNDLED_CLI;
++    return QStandardPaths::findExecutable("bw");
++}
++
++void BitwardenClient::run(QStringList arguments, Environment extra, Function<void(Result)> callback)
++{
++    auto program = this->program();
++    if (program.isEmpty()) {
++        callback({ .ok = false, .output = {}, .error = "missing" });
++        return;
++    }
++
++    auto environment = QProcessEnvironment::systemEnvironment();
++    environment.remove("BW_SESSION");
++    environment.remove("BW_CLIENTID");
++    environment.remove("BW_CLIENTSECRET");
++    // The browser's sign-in is its own, apart from any bw the person uses themselves.
++    auto data_directory = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/superawesomemagicalbrowser/bitwarden";
++    QDir().mkpath(data_directory);
++    QFile::setPermissions(data_directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
++    environment.insert("BITWARDENCLI_APPDATA_DIR", data_directory);
++    environment.insert("BW_NOINTERACTION", "true");
++    if (!m_session.isEmpty())
++        environment.insert("BW_SESSION", QString::fromLatin1(m_session));
++    for (auto it = extra.cbegin(); it != extra.cend(); ++it)
++        environment.insert(it.key(), it.value());
++
++    auto* job = new BitwardenJob(this);
++    job->setProcessEnvironment(environment);
++    job->setProgram(program);
++    arguments.append("--nointeraction");
++    job->setArguments(arguments);
++    job->on_done = [job, callback = AK::move(callback)](int exit_code, bool ran) {
++        Result result;
++        result.output = QString::fromUtf8(job->readAllStandardOutput());
++        auto error_output = QString::fromUtf8(job->readAllStandardError());
++        result.ok = ran && exit_code == 0;
++        if (!ran)
++            result.error = "Bitwarden's command-line client didn't start.";
++        else if (!result.ok)
++            result.error = first_line(error_output.isEmpty() ? result.output : error_output);
++        callback(AK::move(result));
++    };
++    QObject::connect(job, &QProcess::finished, job, [job](int exit_code, QProcess::ExitStatus status) {
++        job->finish(status == QProcess::NormalExit ? exit_code : -1, true);
++    });
++    QObject::connect(job, &QProcess::errorOccurred, job, [job](QProcess::ProcessError error) {
++        if (error == QProcess::FailedToStart)
++            job->finish(-1, false);
++    });
++    QTimer::singleShot(COMMAND_TIMEOUT_MS, job, [job] {
++        job->kill();
++    });
++    job->start(QIODevice::ReadOnly);
++}
++
++void BitwardenClient::set_session(QByteArray session)
++{
++    m_session.fill('\0');
++    m_session = AK::move(session);
++    if (m_session.isEmpty())
++        m_lock_timer.stop();
++    else
++        touch();
++}
++
++void BitwardenClient::touch()
++{
++    if (!m_session.isEmpty())
++        m_lock_timer.start();
++}
++
++void BitwardenClient::status(Function<void(Status, QString)> callback)
++{
++    run({ "status" }, {}, [this, callback = AK::move(callback)](Result result) {
++        if (result.error == "missing") {
++            callback(Status::Missing, {});
++            return;
++        }
++        if (!result.ok) {
++            callback(Status::Failed, result.error);
++            return;
++        }
++        auto status = QJsonDocument::fromJson(result.output.toUtf8()).object();
++        m_email = status.value("userEmail").toString();
++        m_server = status.value("serverUrl").toString();
++        auto state = status.value("status").toString();
++        if (state == "unlocked" && !m_session.isEmpty()) {
++            callback(Status::Unlocked, {});
++        } else if (state == "unauthenticated") {
++            set_session({});
++            callback(Status::SignedOut, {});
++        } else {
++            set_session({});
++            callback(Status::Locked, {});
++        }
++    });
++}
++
++static QString server_url(QString const& server)
++{
++    if (server == "eu")
++        return "https://vault.bitwarden.eu";
++    if (server.isEmpty() || server == "us")
++        return "https://vault.bitwarden.com";
++    return server.contains("://") ? server : "https://" + server;
++}
++
++void BitwardenClient::sign_in(QString server, QString email, QString password, QString code, int method, Function<void(QString)> callback)
++{
++    set_session({});
++    run({ "logout" }, {}, [this, server = AK::move(server), email = AK::move(email), password = AK::move(password), code = AK::move(code), method, callback = AK::move(callback)](Result) mutable {
++        run({ "config", "server", server_url(server) }, {}, [this, email = AK::move(email), password = AK::move(password), code = AK::move(code), method, callback = AK::move(callback)](Result result) mutable {
++            if (!result.ok) {
++                callback(result.error);
++                return;
++            }
++            QStringList arguments { "login", email, "--passwordenv", "SAMB_BW_PASSWORD", "--raw" };
++            if (!code.trimmed().isEmpty())
++                arguments << "--method" << QString::number(method) << "--code" << code.trimmed();
++            run(arguments, { { "SAMB_BW_PASSWORD", password } }, [this, callback = AK::move(callback)](Result result) {
++                if (!result.ok) {
++                    callback(result.error);
++                    return;
++                }
++                set_session(first_line(result.output).toLatin1());
++                run({ "sync" }, {}, [](Result) { });
++                callback({});
++            });
++        });
++    });
++}
++
++void BitwardenClient::sign_in_with_api_key(QString server, QString client_id, QString client_secret, QString password, Function<void(QString)> callback)
++{
++    set_session({});
++    run({ "logout" }, {}, [this, server = AK::move(server), client_id = AK::move(client_id), client_secret = AK::move(client_secret), password = AK::move(password), callback = AK::move(callback)](Result) mutable {
++        run({ "config", "server", server_url(server) }, {}, [this, client_id = AK::move(client_id), client_secret = AK::move(client_secret), password = AK::move(password), callback = AK::move(callback)](Result result) mutable {
++            if (!result.ok) {
++                callback(result.error);
++                return;
++            }
++            Environment key { { "BW_CLIENTID", client_id.trimmed() }, { "BW_CLIENTSECRET", client_secret.trimmed() } };
++            run({ "login", "--apikey" }, key, [this, password = AK::move(password), callback = AK::move(callback)](Result result) mutable {
++                if (!result.ok) {
++                    callback(result.error);
++                    return;
++                }
++                unlock(AK::move(password), AK::move(callback));
++            });
++        });
++    });
++}
++
++void BitwardenClient::unlock(QString password, Function<void(QString)> callback)
++{
++    run({ "unlock", "--passwordenv", "SAMB_BW_PASSWORD", "--raw" }, { { "SAMB_BW_PASSWORD", password } }, [this, callback = AK::move(callback)](Result result) {
++        if (!result.ok) {
++            callback(result.error);
++            return;
++        }
++        set_session(first_line(result.output).toLatin1());
++        // The vault on disk is as of the last sync; bring it up to date for next time.
++        run({ "sync" }, {}, [](Result) { });
++        callback({});
++    });
++}
++
++void BitwardenClient::logins_for(QString url, Function<void(QList<BitwardenLogin>, QString)> callback)
++{
++    touch();
++    run({ "list", "items", "--url", url }, {}, [callback = AK::move(callback)](Result result) {
++        if (!result.ok) {
++            callback({}, result.error);
++            return;
++        }
++        QList<BitwardenLogin> logins;
++        for (auto const& value : QJsonDocument::fromJson(result.output.toUtf8()).array()) {
++            auto item = value.toObject();
++            // Type 1 is a login; cards, identities and notes have nothing to fill here.
++            if (item.value("type").toInt() != 1)
++                continue;
++            auto login = item.value("login").toObject();
++            logins.append({
++                .id = item.value("id").toString(),
++                .name = item.value("name").toString(),
++                .username = login.value("username").toString(),
++                .password = login.value("password").toString(),
++                .has_totp = !login.value("totp").toString().isEmpty(),
++            });
++        }
++        callback(AK::move(logins), {});
++    });
++}
++
++void BitwardenClient::totp(QString id, Function<void(QString)> callback)
++{
++    run({ "get", "totp", id }, {}, [callback = AK::move(callback)](Result result) {
++        callback(result.ok ? first_line(result.output) : QString {});
++    });
++}
++
++void BitwardenClient::lock()
++{
++    if (m_session.isEmpty())
++        return;
++    run({ "lock" }, {}, [](Result) { });
++    set_session({});
++}
++
++void BitwardenClient::sign_out(Function<void()> callback)
++{
++    set_session({});
++    run({ "logout" }, {}, [callback = AK::move(callback)](Result) { callback(); });
++}
++
++QString bitwarden_fill_script(QString const& origin, QString const& username, QString const& password)
++{
++    // NB: The values go in as JSON, which is also JavaScript, so nothing in them can end the string they're in.
++    auto values = QString::fromUtf8(QJsonDocument(QJsonArray { origin, username, password }).toJson(QJsonDocument::Compact));
++    return QStringLiteral(R"js((() => {
++    const [origin, username, password] = %1;
++    // The page may have gone elsewhere since the login was looked up.
++    if (location.origin !== origin)
++        return;
++    const usable = field => {
++        if (field.disabled || field.readOnly)
++            return false;
++        const box = field.getBoundingClientRect();
++        const style = getComputedStyle(field);
++        return box.width > 0 && box.height > 0 && style.visibility !== "hidden" && style.display !== "none";
++    };
++    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
++    const put = (field, value) => {
++        if (!value)
++            return;
++        field.focus();
++        valueSetter.call(field, value);
++        field.dispatchEvent(new Event("input", { bubbles: true }));
++        field.dispatchEvent(new Event("change", { bubbles: true }));
++    };
++    const isUsername = field => ["text", "email", "tel", ""].includes(field.type) || field.autocomplete === "username";
++    const fields = [...document.querySelectorAll("input")].filter(usable);
++    const passwords = fields.filter(field => field.type === "password");
++    const passwordField = passwords.find(field => field === document.activeElement) ?? passwords[0];
++    let usernameField = null;
++    if (passwordField) {
++        const scope = passwordField.form ? [...passwordField.form.elements].filter(field => field.tagName === "INPUT" && usable(field)) : fields;
++        const before = scope.slice(0, scope.indexOf(passwordField)).filter(isUsername);
++        usernameField = scope.find(field => field.autocomplete === "username" && field !== passwordField) ?? before.at(-1) ?? null;
++    } else {
++        // A sign-in that asks for the username first, on a page of its own.
++        usernameField = fields.find(field => field === document.activeElement && isUsername(field))
++            ?? fields.find(field => field.autocomplete === "username") ?? fields.find(isUsername) ?? null;
++    }
++    if (usernameField)
++        put(usernameField, username);
++    if (passwordField)
++        put(passwordField, password);
++})();)js")
++        .arg(values);
++}
++
++PasswordPopover::PasswordPopover(QWidget* parent)
++    : Popover(parent)
++{
++    setAccessibleName("Bitwarden");
++    // NB: The bookmark popover's look, so the two match.
++    card().setObjectName("LadybirdBookmarkPopover");
++    card().setFixedWidth(POPOVER_WIDTH);
++    auto* layout = new QVBoxLayout(&card());
++    layout->setContentsMargins(14, 14, 14, 14);
++    layout->setSpacing(0);
++}
++
++void PasswordPopover::update_chrome_style(QPalette const& palette)
++{
++    setPalette(palette);
++    setStyleSheet(ChromeStyle::bookmark_popover_style_sheet(palette));
++}
++
++QLabel* PasswordPopover::add_label(QVBoxLayout& layout, QString const& text, char const* object_name)
++{
++    auto* label = new QLabel(text, m_body);
++    label->setObjectName(object_name);
++    label->setWordWrap(true);
++    label->setTextFormat(Qt::PlainText);
++    layout->addWidget(label);
++    return label;
++}
++
++QVBoxLayout& PasswordPopover::new_body(QString const& title)
++{
++    ++m_generation;
++    if (m_body) {
++        m_body->hide();
++        m_body->deleteLater();
++    }
++    m_body = new QWidget(&card());
++    auto* layout = new QVBoxLayout(m_body);
++    layout->setContentsMargins(0, 0, 0, 0);
++    layout->setSpacing(10);
++    add_label(*layout, title, "LadybirdBookmarkPopoverTitle");
++    card().layout()->addWidget(m_body);
++    return *layout;
++}
++
++void PasswordPopover::finish_body()
++{
++    m_body->show();
++    if (on_resize_needed)
++        on_resize_needed();
++}
++
++static QLineEdit* new_field(QWidget* parent, QString const& placeholder, bool secret)
++{
++    auto* field = new QLineEdit(parent);
++    field->setObjectName("LadybirdBookmarkPopoverName");
++    field->setAttribute(Qt::WA_MacShowFocusRect, false);
++    field->setPlaceholderText(placeholder);
++    field->setAccessibleName(placeholder);
++    if (secret)
++        field->setEchoMode(QLineEdit::Password);
++    return field;
++}
++
++static QPushButton* new_button(QWidget* parent, QString const& text, bool primary)
++{
++    auto* button = new QPushButton(text, parent);
++    button->setObjectName(primary ? "LadybirdBookmarkPopoverDone" : "LadybirdBookmarkPopoverRemove");
++    button->setAttribute(Qt::WA_LayoutUsesWidgetRect);
++    if (primary)
++        button->setDefault(true);
++    return button;
++}
++
++void PasswordPopover::start(Tab& tab, Trigger trigger)
++{
++    m_tab = &tab;
++    m_trigger = trigger;
++    auto url = tab.url();
++    m_url = qstring_from_ak_string(url.serialize());
++    m_origin = qstring_from_ak_string(url.origin().serialize());
++    auto scheme = qstring_from_ak_string(url.scheme());
++    auto host = QUrl(m_url).host();
++    m_insecure = scheme == "http" && host != "localhost" && host != "127.0.0.1" && host != "::1" && !host.endsWith(".localhost");
++
++    if ((scheme != "https" && scheme != "http") || m_origin == "null") {
++        show_message("Bitwarden", "Bitwarden fills in logins on web pages.");
++        return;
++    }
++
++    auto& layout = new_body("Bitwarden");
++    add_label(layout, "Opening your vault…", "LadybirdBookmarkPopoverLabel");
++    finish_body();
++
++    auto generation = m_generation;
++    BitwardenClient::the().status([this, popover = QPointer(this), generation](BitwardenClient::Status status, QString error) {
++        if (!popover || generation != m_generation)
++            return;
++        switch (status) {
++        case BitwardenClient::Status::Missing:
++            show_message("Bitwarden", "Bitwarden's command-line client isn't installed (the bw command).");
++            break;
++        case BitwardenClient::Status::Failed:
++            show_message("Bitwarden", "Bitwarden didn't answer: " + error);
++            break;
++        case BitwardenClient::Status::SignedOut:
++            show_sign_in();
++            break;
++        case BitwardenClient::Status::Locked:
++            show_unlock();
++            break;
++        case BitwardenClient::Status::Unlocked:
++            look_up();
++            break;
++        }
++    });
++}
++
++void PasswordPopover::show_message(QString const& title, QString const& message)
++{
++    auto& layout = new_body(title);
++    add_label(layout, message, "LadybirdBookmarkPopoverLabel");
++    auto* row = new QHBoxLayout;
++    row->addStretch(1);
++    auto* done = new_button(m_body, "Done", true);
++    QObject::connect(done, &QPushButton::clicked, this, [this] { close(); });
++    row->addWidget(done);
++    layout.addLayout(row);
++    finish_body();
++    done->setFocus();
++}
++
++void PasswordPopover::show_sign_in(QString const& error)
++{
++    auto& layout = new_body("Sign in to Bitwarden");
++    if (!error.isEmpty())
++        add_label(layout, error, "LadybirdBookmarkPopoverLabel");
++
++    auto* server = new QComboBox(m_body);
++    server->setObjectName("LadybirdBookmarkPopoverFolder");
++    server->setAccessibleName("Server");
++    server->addItem("bitwarden.com", "us");
++    server->addItem("bitwarden.eu", "eu");
++    server->addItem("Self-hosted", "self");
++    layout.addWidget(server);
++    auto* server_address = new_field(m_body, "Server address (https://…)", false);
++    server_address->hide();
++    layout.addWidget(server_address);
++    QObject::connect(server, &QComboBox::currentIndexChanged, this, [this, server, server_address] {
++        server_address->setVisible(server->currentData().toString() == "self");
++        if (on_resize_needed)
++            on_resize_needed();
++    });
++
++    auto* method = new QComboBox(m_body);
++    method->setObjectName("LadybirdBookmarkPopoverFolder");
++    method->setAccessibleName("Sign in with");
++    method->addItem("Email and master password", "password");
++    method->addItem("API key and master password", "apikey");
++    layout.addWidget(method);
++
++    auto* email = new_field(m_body, "Email address", false);
++    auto* client_id = new_field(m_body, "API key client_id", false);
++    auto* client_secret = new_field(m_body, "API key client_secret", true);
++    auto* password = new_field(m_body, "Master password", true);
++    auto* code_row = new QWidget(m_body);
++    auto* code_layout = new QHBoxLayout(code_row);
++    code_layout->setContentsMargins(0, 0, 0, 0);
++    code_layout->setSpacing(6);
++    auto* code = new_field(code_row, "Two-step code, if you use one", false);
++    auto* code_method = new QComboBox(code_row);
++    code_method->setObjectName("LadybirdBookmarkPopoverFolder");
++    code_method->setAccessibleName("Two-step login with");
++    code_method->addItem("App", 0);
++    code_method->addItem("Email", 1);
++    code_method->addItem("YubiKey", 3);
++    code_layout->addWidget(code, 1);
++    code_layout->addWidget(code_method);
++    layout.addWidget(email);
++    layout.addWidget(client_id);
++    layout.addWidget(client_secret);
++    layout.addWidget(password);
++    layout.addWidget(code_row);
++    client_id->hide();
++    client_secret->hide();
++    QObject::connect(method, &QComboBox::currentIndexChanged, this, [this, method, email, client_id, client_secret, code_row] {
++        auto with_key = method->currentData().toString() == "apikey";
++        email->setVisible(!with_key);
++        code_row->setVisible(!with_key);
++        client_id->setVisible(with_key);
++        client_secret->setVisible(with_key);
++        if (on_resize_needed)
++            on_resize_needed();
++    });
++
++    auto* note = add_label(layout, "Your vault stays in Bitwarden. The browser keeps it unlocked only while it's open, for 30 minutes after you last use it.", "LadybirdBookmarkPopoverLabel");
++    note->setEnabled(false);
++
++    auto* row = new QHBoxLayout;
++    row->addStretch(1);
++    auto* sign_in = new_button(m_body, "Sign in", true);
++    row->addWidget(sign_in);
++    layout.addLayout(row);
++
++    auto submit = [this, server, server_address, method, email, client_id, client_secret, password, code, code_method, sign_in] {
++        auto server_value = server->currentData().toString() == "self" ? server_address->text().trimmed() : server->currentData().toString();
++        auto secret = password->text();
++        password->clear();
++        sign_in->setEnabled(false);
++        sign_in->setText("Signing in…");
++        auto generation = m_generation;
++        auto done = [this, popover = QPointer(this), generation](QString error) {
++            if (!popover || generation != m_generation)
++                return;
++            if (!error.isEmpty())
++                show_sign_in(error);
++            else
++                look_up();
++        };
++        if (method->currentData().toString() == "apikey") {
++            auto key_secret = client_secret->text();
++            client_secret->clear();
++            BitwardenClient::the().sign_in_with_api_key(server_value, client_id->text(), key_secret, secret, AK::move(done));
++        } else {
++            BitwardenClient::the().sign_in(server_value, email->text().trimmed(), secret, code->text(), code_method->currentData().toInt(), AK::move(done));
++        }
++    };
++    QObject::connect(sign_in, &QPushButton::clicked, this, submit);
++    QObject::connect(password, &QLineEdit::returnPressed, this, submit);
++    QObject::connect(code, &QLineEdit::returnPressed, this, submit);
++    finish_body();
++    email->setFocus();
++}
++
++void PasswordPopover::show_unlock(QString const& error)
++{
++    auto& client = BitwardenClient::the();
++    auto& layout = new_body("Unlock Bitwarden");
++    add_label(layout, error.isEmpty() ? client.email() : error, "LadybirdBookmarkPopoverLabel");
++    auto* password = new_field(m_body, "Master password", true);
++    layout.addWidget(password);
++
++    auto* row = new QHBoxLayout;
++    row->setSpacing(8);
++    auto* sign_out = new_button(m_body, "Sign out", false);
++    row->addWidget(sign_out);
++    row->addStretch(1);
++    auto* unlock = new_button(m_body, "Unlock", true);
++    row->addWidget(unlock);
++    layout.addLayout(row);
++
++    auto submit = [this, password, unlock] {
++        auto secret = password->text();
++        password->clear();
++        unlock->setEnabled(false);
++        unlock->setText("Unlocking…");
++        auto generation = m_generation;
++        BitwardenClient::the().unlock(secret, [this, popover = QPointer(this), generation](QString error) {
++            if (!popover || generation != m_generation)
++                return;
++            if (!error.isEmpty())
++                show_unlock(error);
++            else
++                look_up();
++        });
++    };
++    QObject::connect(unlock, &QPushButton::clicked, this, submit);
++    QObject::connect(password, &QLineEdit::returnPressed, this, submit);
++    QObject::connect(sign_out, &QPushButton::clicked, this, [this] {
++        BitwardenClient::the().sign_out([this, popover = QPointer(this)] {
++            if (popover)
++                show_sign_in();
++        });
++    });
++    finish_body();
++    password->setFocus();
++}
++
++void PasswordPopover::look_up()
++{
++    auto& layout = new_body("Bitwarden");
++    add_label(layout, "Looking for logins…", "LadybirdBookmarkPopoverLabel");
++    finish_body();
++    auto generation = m_generation;
++    BitwardenClient::the().logins_for(m_url, [this, popover = QPointer(this), generation](QList<BitwardenLogin> logins, QString error) {
++        if (!popover || generation != m_generation)
++            return;
++        if (!error.isEmpty()) {
++            if (!BitwardenClient::the().is_unlocked())
++                show_unlock();
++            else
++                show_message("Bitwarden", error);
++            return;
++        }
++        // The shortcut fills the only login there is straight away, as Bitwarden's own does.
++        if (m_trigger == Trigger::Shortcut && logins.size() == 1 && !m_insecure) {
++            fill(logins.first());
++            return;
++        }
++        show_logins(logins);
++    });
++}
++
++void PasswordPopover::show_logins(QList<BitwardenLogin> const& logins)
++{
++    auto host = QUrl(m_url).host();
++    auto& layout = new_body(logins.isEmpty() ? "No logins for " + host : "Fill in a login");
++    if (m_insecure)
++        add_label(layout, "This page isn't secure: what you fill in can be read on its way.", "LadybirdBookmarkPopoverLabel");
++    if (logins.isEmpty())
++        add_label(layout, "Your Bitwarden vault has none for this site.", "LadybirdBookmarkPopoverLabel");
++
++    for (auto const& login : logins) {
++        auto text = login.name;
++        if (!login.username.isEmpty())
++            text += " · " + login.username;
++        auto* button = new_button(m_body, text, false);
++        button->setToolTip(text);
++        button->setStyleSheet("text-align: left;");
++        QObject::connect(button, &QPushButton::clicked, this, [this, login] { fill(login); });
++        layout.addWidget(button);
++    }
++
++    auto* row = new QHBoxLayout;
++    row->setSpacing(8);
++    auto* lock = new_button(m_body, "Lock", false);
++    QObject::connect(lock, &QPushButton::clicked, this, [this] {
++        BitwardenClient::the().lock();
++        close();
++    });
++    row->addWidget(lock);
++    auto* vault = new_button(m_body, "Open vault", false);
++    QObject::connect(vault, &QPushButton::clicked, this, [this] {
++        auto server = BitwardenClient::the().server();
++        if (on_open_url)
++            on_open_url(server.isEmpty() ? QString("https://vault.bitwarden.com") : server);
++        close();
++    });
++    row->addWidget(vault);
++    row->addStretch(1);
++    auto* done = new_button(m_body, "Done", true);
++    QObject::connect(done, &QPushButton::clicked, this, [this] { close(); });
++    row->addWidget(done);
++    layout.addLayout(row);
++    finish_body();
++}
++
++void PasswordPopover::fill(BitwardenLogin const& login)
++{
++    if (!m_tab) {
++        close();
++        return;
++    }
++    m_tab->view().run_javascript(ak_string_from_qstring(bitwarden_fill_script(m_origin, login.username, login.password)));
++    if (!login.has_totp) {
++        close();
++        return;
++    }
++    // As Bitwarden's own does: the login's verification code goes on the clipboard, ready for the next page.
++    auto& layout = new_body("Filled in");
++    add_label(layout, "Copying the verification code…", "LadybirdBookmarkPopoverLabel");
++    finish_body();
++    auto generation = m_generation;
++    BitwardenClient::the().totp(login.id, [this, popover = QPointer(this), generation](QString code) {
++        if (!popover || generation != m_generation)
++            return;
++        if (!code.isEmpty())
++            QApplication::clipboard()->setText(code);
++        show_message("Filled in", code.isEmpty() ? "The verification code couldn't be copied." : "The verification code is copied, ready to paste.");
++        QTimer::singleShot(2500, this, [this, popover = QPointer(this), generation = m_generation] {
++            if (popover && generation == m_generation)
++                close();
++        });
++    });
++}
++
++}
+diff --git a/UI/Qt/Bitwarden.h b/UI/Qt/Bitwarden.h
+new file mode 100644
+index 00000000..e1462a1d
+--- /dev/null
++++ b/UI/Qt/Bitwarden.h
+@@ -0,0 +1,135 @@
++/*
++ * Copyright (c) 2026, SuperAwesomeMagical Browser
++ *
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++// SuperAwesomeMagical Browser: Bitwarden in the toolbar. The vault is reached through Bitwarden's own command-line
++// client (bw), which signs in, keeps the vault encrypted on disk and matches logins to pages by Bitwarden's rules; the
++// key that unlocks it (bw's session key) is only ever held here, in memory, and handed to bw in its environment.
++
++#pragma once
++
++#include <AK/Function.h>
++#include <AK/kmalloc.h>
++#include <UI/Qt/Popover.h>
++
++#include <QByteArray>
++#include <QList>
++#include <QMap>
++#include <QObject>
++#include <QPointer>
++#include <QProcess>
++#include <QString>
++#include <QStringList>
++#include <QTimer>
++
++class QLabel;
++class QPalette;
++class QVBoxLayout;
++
++namespace Ladybird {
++
++class Tab;
++
++struct BitwardenLogin {
++    QString id;
++    QString name;
++    QString username;
++    QString password;
++    bool has_totp { false };
++};
++
++class BitwardenClient final : public QObject {
++public:
++    AK_ALLOC_WITH_KMALLOC;
++
++    enum class Status {
++        Missing,
++        SignedOut,
++        Locked,
++        Unlocked,
++        Failed,
++    };
++
++    static BitwardenClient& the();
++
++    bool is_unlocked() const { return !m_session.isEmpty(); }
++    QString const& email() const { return m_email; }
++    QString const& server() const { return m_server; }
++
++    void status(Function<void(Status, QString error)>);
++    void sign_in(QString server, QString email, QString password, QString code, int method, Function<void(QString error)>);
++    void sign_in_with_api_key(QString server, QString client_id, QString client_secret, QString password, Function<void(QString error)>);
++    void unlock(QString password, Function<void(QString error)>);
++    void logins_for(QString url, Function<void(QList<BitwardenLogin>, QString error)>);
++    void totp(QString id, Function<void(QString code)>);
++    void lock();
++    void sign_out(Function<void()>);
++
++    // Every use keeps the vault open for this much longer; then it locks.
++    static constexpr int LOCK_AFTER_MS = 30 * 60 * 1000;
++
++private:
++    struct Result {
++        bool ok { false };
++        QString output;
++        QString error;
++    };
++    using Environment = QMap<QString, QString>;
++
++    BitwardenClient();
++    QString program() const;
++    void run(QStringList arguments, Environment, Function<void(Result)>);
++    void set_session(QByteArray);
++    void touch();
++
++    QByteArray m_session;
++    QString m_email;
++    QString m_server;
++    QTimer m_lock_timer;
++};
++
++class PasswordPopover final : public Popover {
++public:
++    AK_ALLOC_WITH_KMALLOC;
++
++    enum class Trigger {
++        Button,
++        Shortcut,
++    };
++
++    explicit PasswordPopover(QWidget* parent);
++
++    // Looks for the logins of the tab's page, asking to sign in or unlock first when Bitwarden needs it.
++    void start(Tab&, Trigger);
++    void update_chrome_style(QPalette const&);
++
++    Function<void(QString url)> on_open_url;
++    // The popover's contents changed size, so it needs fitting again under its button.
++    Function<void()> on_resize_needed;
++
++private:
++    QVBoxLayout& new_body(QString const& title);
++    void finish_body();
++    void show_message(QString const& title, QString const& message);
++    void show_sign_in(QString const& error = {});
++    void show_unlock(QString const& error = {});
++    void show_logins(QList<BitwardenLogin> const&);
++    void look_up();
++    void fill(BitwardenLogin const&);
++    QLabel* add_label(QVBoxLayout&, QString const&, char const* object_name);
++
++    QPointer<Tab> m_tab;
++    QString m_url;
++    QString m_origin;
++    bool m_insecure { false };
++    Trigger m_trigger { Trigger::Button };
++    QWidget* m_body { nullptr };
++    int m_generation { 0 };
++};
++
++// The script that fills a login into the page, which does nothing unless the page is still at the given origin.
++QString bitwarden_fill_script(QString const& origin, QString const& username, QString const& password);
++
++}
+diff --git a/UI/Qt/CMakeLists.txt b/UI/Qt/CMakeLists.txt
+index f26f17c7..9b21adb4 100644
+--- a/UI/Qt/CMakeLists.txt
++++ b/UI/Qt/CMakeLists.txt
+@@ -18,6 +18,7 @@ add_library(ladybird_impl STATIC
+     Application.cpp
+     ApplicationActions.cpp
+     Autocomplete.cpp
++    Bitwarden.cpp
+     BookmarkDialog.cpp
+     BookmarkStore.cpp
+     BookmarkPopover.cpp
+diff --git a/UI/Qt/Icon.cpp b/UI/Qt/Icon.cpp
+index e8da3ec6..d3c1576b 100644
+--- a/UI/Qt/Icon.cpp
++++ b/UI/Qt/Icon.cpp
+@@ -296,6 +296,8 @@ static constexpr auto COMPOSITOR_ICON_PATH = "M5.5 6.5h9v7h-9zM5.5 9.5h-4v-7h9v4
+ static constexpr auto HUB_ICON_PATH = "M7.5 5.5a2 2 0 1 1 0 4a2 2 0 1 1 0-4zM7.5 1.5a1 1 0 1 1 0 2a1 1 0 1 1 0-2zM7.5 11.5a1 1 0 1 1 0 2a1 1 0 1 1 0-2zM2.5 6.5a1 1 0 1 1 0 2a1 1 0 1 1 0-2zM12.5 6.5a1 1 0 1 1 0 2a1 1 0 1 1 0-2zM7.5 3.5v2M7.5 9.5v2M3.5 7.5h2M9.5 7.5h2"sv;
+ static constexpr auto IMAGE_ICON_PATH = "M2.5 2.5h11a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zM1.5 11.5l3.5-3.5 5.5 5.5M9.5 9.5l2-2 3 3M10.5 5.5v.01"sv;
+ static constexpr auto FOLDER_ICON_PATH = "M2.5 2.5h3l2 2h6a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"sv;
++// SuperAwesomeMagical Browser: a key, for Bitwarden.
++static constexpr auto KEY_ICON_PATH = "M6.5 8a3 3 0 1 1-6 0a3 3 0 1 1 6 0zM6.5 8h8M12.5 8v2.5M10 8v2"sv;
+ static constexpr auto FEEDBACK_ICON_PATH = "M4 1.5h7a2.5 2.5 0 0 1 2.5 2.5v5a2.5 2.5 0 0 1-2.5 2.5H7l-2.5 2.5v-2.5H4a2.5 2.5 0 0 1-2.5-2.5V4a2.5 2.5 0 0 1 2.5-2.5zM7.5 4.25v1.6M7.5 8.75v.01"sv;
+ static constexpr auto EXTERNAL_LINK_ICON_PATH = "M6.5 2.5h-3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-3M9.5 1.5h4v4M13.5 1.5l-6 6"sv;
+ 
+@@ -384,6 +386,8 @@ static StringView chrome_icon_path(ChromeIcon icon)
+         return PAUSE_ICON_PATH;
+     case ChromeIcon::Feedback:
+         return FEEDBACK_ICON_PATH;
++    case ChromeIcon::Key:
++        return KEY_ICON_PATH;
+     case ChromeIcon::ExternalLink:
+         return EXTERNAL_LINK_ICON_PATH;
+     case ChromeIcon::ZoomOut:
+diff --git a/UI/Qt/Icon.h b/UI/Qt/Icon.h
+index e465ac5d..b50100e5 100644
+--- a/UI/Qt/Icon.h
++++ b/UI/Qt/Icon.h
+@@ -58,6 +58,7 @@ enum class ChromeIcon {
+     Warning,
+     Pause,
+     Feedback,
++    Key,
+     ExternalLink,
+     ZoomOut,
+     Sidebar,
+diff --git a/UI/Qt/WebContentView.cpp b/UI/Qt/WebContentView.cpp
+index 9db0efa9..0d02c877 100644
+--- a/UI/Qt/WebContentView.cpp
++++ b/UI/Qt/WebContentView.cpp
+@@ -796,6 +796,9 @@ static bool is_browser_reserved_shortcut(QKeyEvent const& event)
+         return true;
+     if (modifiers == (Qt::ControlModifier | Qt::ShiftModifier) && key == Qt::Key_B)
+         return true;
++    // SuperAwesomeMagical Browser: Bitwarden.
++    if (modifiers == (Qt::ControlModifier | Qt::ShiftModifier) && key == Qt::Key_L)
++        return true;
+ 
+     if (modifiers == Qt::ControlModifier && (key == Qt::Key_L || key == Qt::Key_Tab || key == Qt::Key_PageDown))
+         return true;
+diff --git a/UI/Qt/WindowToolbar.cpp b/UI/Qt/WindowToolbar.cpp
+index aa56a248..4b2629ff 100644
+--- a/UI/Qt/WindowToolbar.cpp
++++ b/UI/Qt/WindowToolbar.cpp
+@@ -9,6 +9,7 @@
+ 
+ #include <AK/GenericShorthands.h>
+ #include <AK/kmalloc.h>
++#include <LibURL/Parser.h>
+ #include <LibWebView/Application.h>
+ #include <LibWebView/CrashReportOutbox.h>
+ #include <LibWebView/WebCompatReport.h>
+@@ -19,6 +20,7 @@
+ #include <UI/Qt/ChromeStyle.h>
+ #include <UI/Qt/DownloadPresentation.h>
+ #include <UI/Qt/ElidedLabel.h>
++#include <UI/Qt/Bitwarden.h>
+ #include <UI/Qt/FeedbackPopover.h>
+ #include <UI/Qt/Icon.h>
+ #include <UI/Qt/LadybirdButton.h>
+@@ -55,6 +57,7 @@
+ #include <QStyleOptionToolButton>
+ #include <QStylePainter>
+ #include <QTimer>
++#include <QShortcut>
+ #include <QToolButton>
+ #include <QVBoxLayout>
+ #include <QVariantAnimation>
+@@ -1230,6 +1233,25 @@ WindowToolbar::WindowToolbar(WebView::IsPrivate is_private, QWidget* parent)
+         show_downloads_popover();
+     });
+ 
++    // SuperAwesomeMagical Browser: Bitwarden, from its button or Ctrl+Shift+L.
++    m_passwords_button = new ToolbarButton(m_toolbar);
++    m_passwords_button->setObjectName("SAMPasswordsButton");
++    m_passwords_button->setToolTip("Bitwarden (Ctrl+Shift+L)");
++    m_passwords_button->setAccessibleName("Bitwarden");
++    m_passwords_button->setCheckable(true);
++    m_passwords_button->setAutoRaise(true);
++    m_passwords_button->setFocusPolicy(Qt::NoFocus);
++    m_passwords_button->setIconSize({ TOOLBAR_ICON_SIZE, TOOLBAR_ICON_SIZE });
++    m_passwords_button->setFixedSize(TOOLBAR_BUTTON_SIZE);
++    m_passwords_button->setAttribute(Qt::WA_LayoutUsesWidgetRect);
++    QObject::connect(m_passwords_button, &QToolButton::clicked, this, [this] {
++        m_passwords_button->setChecked(m_password_popover && m_password_popover->isVisible());
++        show_password_popover(false);
++    });
++    auto* passwords_shortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_L), this);
++    passwords_shortcut->setContext(Qt::WindowShortcut);
++    QObject::connect(passwords_shortcut, &QShortcut::activated, this, [this] { show_password_popover(true); });
++
+     if constexpr (has_feedback_button) {
+         m_feedback_button = new FeedbackButton(m_toolbar);
+         QObject::connect(m_feedback_button, &QToolButton::clicked, this, [this] {
+@@ -1436,6 +1458,7 @@ void WindowToolbar::lay_out_as_row()
+     toolbar_layout->addWidget(m_navigation_buttons, 0, Qt::AlignVCenter);
+     m_navigation_buttons->show();
+     toolbar_layout->addWidget(&field_slot(), 1);
++    toolbar_layout->addWidget(m_passwords_button, 0, Qt::AlignVCenter);
+     toolbar_layout->addWidget(m_downloads_button, 0, Qt::AlignVCenter);
+     if (m_feedback_button)
+         toolbar_layout->addWidget(m_feedback_button, 0, Qt::AlignVCenter);
+@@ -1474,6 +1497,7 @@ void WindowToolbar::lay_out_in_sidebar()
+     m_window_controls_separator->hide();
+ 
+     auto* footer_layout = static_cast<QBoxLayout*>(m_sidebar_footer->layout());
++    footer_layout->addWidget(m_passwords_button, 0, Qt::AlignVCenter);
+     footer_layout->addWidget(m_downloads_button, 0, Qt::AlignVCenter);
+     if (m_feedback_button)
+         footer_layout->addWidget(m_feedback_button, 0, Qt::AlignVCenter);
+@@ -2035,6 +2059,7 @@ void WindowToolbar::recreate_icons()
+     m_reload_action->setIcon(create_chrome_icon(ChromeIcon::Reload, Theme::chrome_palette(*this), activity, TOOLBAR_ICON_SIZE));
+     m_stop_action->setIcon(create_chrome_icon(ChromeIcon::Stop, Theme::chrome_palette(*this), activity, TOOLBAR_ICON_SIZE));
+     m_downloads_button->setIcon(create_chrome_icon(ChromeIcon::Download, Theme::chrome_palette(*this), activity, TOOLBAR_ICON_SIZE));
++    m_passwords_button->setIcon(create_chrome_icon(ChromeIcon::Key, Theme::chrome_palette(*this), activity, TOOLBAR_ICON_SIZE));
+     if (m_feedback_button)
+         m_feedback_button->setIcon(create_chrome_icon(ChromeIcon::Feedback, Theme::chrome_palette(*this), activity, TOOLBAR_ICON_SIZE));
+     update_window_control_icons();
+@@ -2090,6 +2115,37 @@ void WindowToolbar::update_feedback_button()
+     }
+ }
+ 
++void WindowToolbar::fit_password_popover()
++{
++    m_password_popover->card().layout()->activate();
++    m_password_popover->adjustSize();
++    move_popover_to_button(*m_password_popover, *m_passwords_button);
++}
++
++void WindowToolbar::show_password_popover(bool from_shortcut)
++{
++    if (!m_tab)
++        return;
++    if (!m_password_popover) {
++        m_password_popover = new PasswordPopover(this);
++        m_password_popover->on_visibility_change = [this](bool visible) {
++            m_passwords_button->setChecked(visible);
++        };
++        m_password_popover->on_resize_needed = [this] {
++            if (m_password_popover && m_password_popover->isVisible())
++                fit_password_popover();
++        };
++        m_password_popover->on_open_url = [this](QString url) {
++            browser_window().new_tab_from_url(URL::Parser::basic_parse(ak_string_from_qstring(url)).value_or(URL::URL::about("blank"sv)), Web::HTML::ActivateTab::Yes, BrowserWindow::TabLocation::after_current_tab());
++        };
++    }
++    m_password_popover->update_chrome_style(palette());
++    m_password_popover->show();
++    m_password_popover->start(*m_tab, from_shortcut ? PasswordPopover::Trigger::Shortcut : PasswordPopover::Trigger::Button);
++    fit_password_popover();
++    m_password_popover->raise();
++}
++
+ void WindowToolbar::fit_feedback_popover()
+ {
+     m_feedback_popover->card().layout()->activate();
+diff --git a/UI/Qt/WindowToolbar.h b/UI/Qt/WindowToolbar.h
+index dd05424c..951d62f8 100644
+--- a/UI/Qt/WindowToolbar.h
++++ b/UI/Qt/WindowToolbar.h
+@@ -29,6 +29,7 @@ class DownloadsButton;
+ class DownloadsPopover;
+ class FeedbackButton;
+ class FeedbackPopover;
++class PasswordPopover;
+ class LocationEdit;
+ class PerformanceMonitorWidget;
+ class Popover;
+@@ -122,6 +123,8 @@ private:
+     void update_downloads_popover();
+     void position_downloads_popover();
+     void show_feedback_popover();
++    void show_password_popover(bool from_shortcut);
++    void fit_password_popover();
+     void fit_feedback_popover();
+     void move_popover_to_button(Popover&, QWidget& button);
+     void size_navigation_buttons(QSize, int spacing);
+@@ -185,6 +188,8 @@ private:
+ 
+     FeedbackButton* m_feedback_button { nullptr };
+     QPointer<FeedbackPopover> m_feedback_popover;
++    QToolButton* m_passwords_button { nullptr };
++    QPointer<PasswordPopover> m_password_popover;
+ 
+     bool m_is_updating_chrome_style { false };
+ };
